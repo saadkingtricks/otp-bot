@@ -140,20 +140,19 @@ bot_settings = {
 number_batches = {}
 used_numbers_list = []
 nexa_assigned_numbers = {} 
-voltx_assigned_numbers = {}  # 🌟 VoltX number tracking
+voltx_assigned_numbers = {}
 NEXA_BASE_URL = "http://63.141.255.227"
 total_uploaded_stats = 0
 total_assigned_stats = 0
 processed_otps = set()
-processed_otps_order = deque()  # FIFO eviction — prevents duplicate OTP delivery after clear
+processed_otps_order = deque()
 recent_traffic = []
 user_banned_cache = {}
 otp_received_numbers = set()
-OTP_RECEIVED_CAP = 5000  # 🌟 Memory cap — prevents unbounded growth on long-running hosts
-otp_received_order = deque()  # tracks insertion order so we can evict the oldest entries
+OTP_RECEIVED_CAP = 5000
+otp_received_order = deque()
 
 def _track_processed_otp(uid):
-    """Add a unique_id to processed_otps with FIFO eviction (no dangerous clear())."""
     global processed_otps, processed_otps_order
     processed_otps.add(uid)
     processed_otps_order.append(uid)
@@ -162,7 +161,6 @@ def _track_processed_otp(uid):
         processed_otps.discard(oldest)
 
 def _track_otp_received(num):
-    """Add a number to otp_received_numbers with a hard memory cap (FIFO eviction)."""
     global otp_received_numbers, otp_received_order
     if not num or num in otp_received_numbers:
         return
@@ -174,161 +172,150 @@ def _track_otp_received(num):
 
 panel_warmup_done = False
 nexa_warmup_done = False
-
-# Active HTTP sessions for Auto Captcha Panels
 panel_sessions = {}
 
-# 🌟 sAjaxSource (AJAX/DataTable) and Fallback HTML Parser Helper Function
 def fetch_cpt_panel_cdrs(p, session, check_url):
-    res = session.get(check_url, timeout=15)
-    html_text = res.text
-    
-    # Check if session expired or redirected to login page
-    if "login" in html_text.lower() or "signin" in html_text.lower() or any(x in html_text for x in ["Sign in to your account", "Please sign in", "Welcome back!"]):
-        raise Exception("Session expired")
+    try:
+        res = session.get(check_url, timeout=15)
+        html_text = res.text
         
-    soup = BeautifulSoup(html_text, 'html.parser')
+        if "login" in html_text.lower() or "signin" in html_text.lower() or any(x in html_text for x in ["Sign in to your account", "Please sign in", "Welcome back!"]):
+            raise Exception("Session expired")
+            
+        soup = BeautifulSoup(html_text, 'html.parser')
+        detected_col_count = 7
+        for table in soup.find_all('table'):
+            header_rows = table.find_all('tr')
+            if header_rows:
+                first_row_cols = header_rows[0].find_all(['th', 'td'])
+                if len(first_row_cols) > detected_col_count:
+                    detected_col_count = len(first_row_cols)
+                    break
 
-    # Count columns from HTML table header (to set iColumns correctly)
-    detected_col_count = 7
-    for table in soup.find_all('table'):
-        header_rows = table.find_all('tr')
-        if header_rows:
-            first_row_cols = header_rows[0].find_all(['th', 'td'])
-            if len(first_row_cols) > detected_col_count:
-                detected_col_count = len(first_row_cols)
-                break
-
-    s_ajax_source = ""
-    for script in soup.find_all("script"):
-        script_text = script.string or ""
-        # Pattern 1: sAjaxSource (legacy DataTables)
-        match = re.search(r'sAjaxSource"?\s*:\s*"([^"]+)"', script_text)
-        if match:
-            s_ajax_source = match.group(1)
-            break
-        # Pattern 2: ajax: "url" (DataTables 1.10+)
-        match = re.search(r'["\']ajax["\']\s*:\s*["\']([^"\']+)["\']', script_text)
-        if match:
-            s_ajax_source = match.group(1)
-            break
-        # Pattern 3: ajax: { url: "..." }
-        match = re.search(r'["\']?ajax["\']?\s*:\s*\{[^}]*["\']?url["\']?\s*:\s*["\']([^"\']+)["\']', script_text)
-        if match:
-            s_ajax_source = match.group(1)
-            break
-        # Pattern 4: url: "..." inside DataTable/dataTable call context
-        if 'DataTable' in script_text or 'dataTable' in script_text:
-            match = re.search(r'"url"\s*:\s*"([^"]+)"', script_text)
+        s_ajax_source = ""
+        for script in soup.find_all("script"):
+            script_text = script.string or ""
+            match = re.search(r'sAjaxSource"?\s*:\s*"([^"]+)"', script_text)
             if match:
                 s_ajax_source = match.group(1)
                 break
-            
-    results = []
-    
-    n_col_name = p.get("num_col_name", "number").lower()
-    m_col_name = p.get("msg_col_name", "message").lower()
-    n_idx = int(p.get("num_col_idx", 1)) - 1 if p.get("num_col_idx") else 1
-    m_idx = int(p.get("msg_col_idx", 2)) - 1 if p.get("msg_col_idx") else 2
-
-    # 5.1 If sAjaxSource AJAX link is found
-    if s_ajax_source:
-        baseUrl = p.get("login_url", "").split("/client")[0].split("/login")[0].strip()
-        if not baseUrl.startswith("http"):
-            baseUrl = "http://" + baseUrl
-            
-        full_ajax_url = ""
-        if s_ajax_source.startswith("http"):
-            full_ajax_url = s_ajax_source
-        elif s_ajax_source.startswith("/"):
-            full_ajax_url = f"{baseUrl}{s_ajax_source}"
-        else:
-            last_slash_idx = check_url.rfind("/")
-            if last_slash_idx > 0:
-                current_dir = check_url[:last_slash_idx]
-            else:
-                current_dir = check_url.rstrip("/")
-            full_ajax_url = f"{current_dir}/{s_ajax_source}"
-
-        if "iDisplayLength" not in full_ajax_url:
-            col_search = "&".join([f"sSearch_{i}=&bRegex_{i}=false&bSearchable_{i}=true&bSortable_{i}=true" for i in range(detected_col_count)])
-            query_params = f"sEcho=1&iColumns={detected_col_count}&iDisplayStart=0&iDisplayLength=9999&sSearch=&bRegex=false&iSortingCols=1&iSortCol_0=0&sSortDir_0=desc&{col_search}"
-            divider = "&" if "?" in full_ajax_url else "?"
-            full_ajax_url += f"{divider}{query_params}"
-
-        ajax_headers = {
-            "Referer": check_url,
-            "X-Requested-With": "XMLHttpRequest"
-        }
+            match = re.search(r'["\']ajax["\']\s*:\s*["\']([^"\']+)["\']', script_text)
+            if match:
+                s_ajax_source = match.group(1)
+                break
+            match = re.search(r'["\']?ajax["\']?\s*:\s*\{[^}]*["\']?url["\']?\s*:\s*["\']([^"\']+)["\']', script_text)
+            if match:
+                s_ajax_source = match.group(1)
+                break
+            if 'DataTable' in script_text or 'dataTable' in script_text:
+                match = re.search(r'"url"\s*:\s*"([^"]+)"', script_text)
+                if match:
+                    s_ajax_source = match.group(1)
+                    break
+                
+        results = []
         
-        ajax_res = session.get(full_ajax_url, headers=ajax_headers, timeout=15)
-        # Rate limit detection — wait and retry once
-        rate_limit_phrases = ["too many times", "try again", "rate limit", "slow down", "429", "blocked"]
-        if not ajax_res.text.strip():
-            raise Exception("AJAX URL returned empty response. Check your Msg Link / check_url setting.")
-        if any(ph in ajax_res.text.lower() for ph in rate_limit_phrases) and ajax_res.text.strip()[0] != '{':
-            time.sleep(6)
+        n_col_name = p.get("num_col_name", "number").lower()
+        m_col_name = p.get("msg_col_name", "message").lower()
+        n_idx = int(p.get("num_col_idx", 1)) - 1 if p.get("num_col_idx") else 1
+        m_idx = int(p.get("msg_col_idx", 2)) - 1 if p.get("msg_col_idx") else 2
+
+        if s_ajax_source:
+            baseUrl = p.get("login_url", "").split("/client")[0].split("/login")[0].strip()
+            if not baseUrl.startswith("http"):
+                baseUrl = "http://" + baseUrl
+                
+            full_ajax_url = ""
+            if s_ajax_source.startswith("http"):
+                full_ajax_url = s_ajax_source
+            elif s_ajax_source.startswith("/"):
+                full_ajax_url = f"{baseUrl}{s_ajax_source}"
+            else:
+                last_slash_idx = check_url.rfind("/")
+                if last_slash_idx > 0:
+                    current_dir = check_url[:last_slash_idx]
+                else:
+                    current_dir = check_url.rstrip("/")
+                full_ajax_url = f"{current_dir}/{s_ajax_source}"
+
+            if "iDisplayLength" not in full_ajax_url:
+                col_search = "&".join([f"sSearch_{i}=&bRegex_{i}=false&bSearchable_{i}=true&bSortable_{i}=true" for i in range(detected_col_count)])
+                query_params = f"sEcho=1&iColumns={detected_col_count}&iDisplayStart=0&iDisplayLength=9999&sSearch=&bRegex=false&iSortingCols=1&iSortCol_0=0&sSortDir_0=desc&{col_search}"
+                divider = "&" if "?" in full_ajax_url else "?"
+                full_ajax_url += f"{divider}{query_params}"
+
+            ajax_headers = {
+                "Referer": check_url,
+                "X-Requested-With": "XMLHttpRequest"
+            }
+            
             ajax_res = session.get(full_ajax_url, headers=ajax_headers, timeout=15)
-        try:
-            data_dict = ajax_res.json()
-        except Exception:
-            raise Exception(f"AJAX response is not valid JSON. Got: {ajax_res.text[:120]!r}")
-        rows = data_dict.get("aaData", [])
-        for row_val in rows:
-            if not isinstance(row_val, list):
-                continue
-                
-            if len(row_val) < max(n_idx, m_idx) + 1:
-                continue
-                
-            num_val = row_val[n_idx] if (0 <= n_idx < len(row_val)) else row_val[2]
-            msg_val = row_val[m_idx] if (0 <= m_idx < len(row_val)) else row_val[4]
-            
-            clean_num = re.sub(r'\D', '', str(num_val))
-            if clean_num and 5 <= len(clean_num) <= 18:
-                otp = extract_otp_code(msg_val)
-                if otp and len(msg_val) > 4:
-                    results.append({"number": clean_num, "message": msg_val, "otp": otp})
+            rate_limit_phrases = ["too many times", "try again", "rate limit", "slow down", "429", "blocked"]
+            if not ajax_res.text.strip():
+                raise Exception("AJAX URL returned empty response. Check your Msg Link / check_url setting.")
+            if any(ph in ajax_res.text.lower() for ph in rate_limit_phrases) and ajax_res.text.strip()[0] != '{':
+                time.sleep(6)
+                ajax_res = session.get(full_ajax_url, headers=ajax_headers, timeout=15)
+            try:
+                data_dict = ajax_res.json()
+            except Exception:
+                raise Exception(f"AJAX response is not valid JSON. Got: {ajax_res.text[:120]!r}")
+            rows = data_dict.get("aaData", [])
+            for row_val in rows:
+                if not isinstance(row_val, list):
+                    continue
                     
-    else:
-        # 5.2 Backup logic to read from direct HTML table
-        tables = soup.find_all('table')
-        for table in tables:
-            rows = table.find_all('tr')
-            if not rows: continue
-            
-            final_n_idx = n_idx
-            final_m_idx = m_idx
-            
-            header_cells = rows[0].find_all(['th', 'td'])
-            for i, cell in enumerate(header_cells):
-                c_text = cell.get_text(strip=True).lower()
-                if n_col_name in c_text: final_n_idx = i
-                if m_col_name in c_text: final_m_idx = i
-
-            for row in rows:
-                cols = row.find_all(['td', 'th'])
-                if all(c.name == 'th' for c in cols): continue
-                
-                if len(cols) > max(final_n_idx, final_m_idx):
-                    num_text = cols[final_n_idx].get_text(separator=" ", strip=True)
-                    msg_text = cols[final_m_idx].get_text(separator=" ", strip=True)
+                if len(row_val) < max(n_idx, m_idx) + 1:
+                    continue
                     
-                    clean_num = re.sub(r'\D', '', num_text)
-                    if clean_num and 5 <= len(clean_num) <= 18:
-                        otp = extract_otp_code(msg_text)
-                        if otp and len(msg_text) > 4:
-                            results.append({"number": clean_num, "message": msg_text, "otp": otp})
-                            
-    return results, html_text
+                num_val = row_val[n_idx] if (0 <= n_idx < len(row_val)) else row_val[2]
+                msg_val = row_val[m_idx] if (0 <= m_idx < len(row_val)) else row_val[4]
+                
+                clean_num = re.sub(r'\D', '', str(num_val))
+                if clean_num and 5 <= len(clean_num) <= 18:
+                    otp = extract_otp_code(msg_val)
+                    if otp and len(msg_val) > 4:
+                        results.append({"number": clean_num, "message": msg_val, "otp": otp})
+                        
+        else:
+            tables = soup.find_all('table')
+            for table in tables:
+                rows = table.find_all('tr')
+                if not rows: continue
+                
+                final_n_idx = n_idx
+                final_m_idx = m_idx
+                
+                header_cells = rows[0].find_all(['th', 'td'])
+                for i, cell in enumerate(header_cells):
+                    c_text = cell.get_text(strip=True).lower()
+                    if n_col_name in c_text: final_n_idx = i
+                    if m_col_name in c_text: final_m_idx = i
 
-# Track active number sessions to expire them automatically
+                for row in rows:
+                    cols = row.find_all(['td', 'th'])
+                    if all(c.name == 'th' for c in cols): continue
+                    
+                    if len(cols) > max(final_n_idx, final_m_idx):
+                        num_text = cols[final_n_idx].get_text(separator=" ", strip=True)
+                        msg_text = cols[final_m_idx].get_text(separator=" ", strip=True)
+                        
+                        clean_num = re.sub(r'\D', '', num_text)
+                        if clean_num and 5 <= len(clean_num) <= 18:
+                            otp = extract_otp_code(msg_text)
+                            if otp and len(msg_text) > 4:
+                                results.append({"number": clean_num, "message": msg_text, "otp": otp})
+                                
+        return results, html_text
+    except Exception as e:
+        raise e
+
 user_active_sessions = {}
 
 def load_db():
     global bot_settings, number_batches, used_numbers_list, total_uploaded_stats, total_assigned_stats, recent_traffic, otp_received_numbers, otp_received_order
-    if os.path.exists(DB_FILE):
-        try:
+    try:
+        if os.path.exists(DB_FILE):
             with open(DB_FILE, "r", encoding='utf-8') as f:
                 data = json.load(f)
                 saved_settings = data.get("bot_settings", {})
@@ -351,10 +338,10 @@ def load_db():
                 nexa_assigned_numbers = data.get("nexa_assigned_numbers", {})
                 loaded_otp_nums = data.get("otp_received_numbers", [])
                 if len(loaded_otp_nums) > OTP_RECEIVED_CAP:
-                    loaded_otp_nums = loaded_otp_nums[-OTP_RECEIVED_CAP:]  # keep most recent only
+                    loaded_otp_nums = loaded_otp_nums[-OTP_RECEIVED_CAP:]
                 otp_received_numbers = set(loaded_otp_nums)
                 otp_received_order = deque(loaded_otp_nums)
-            # Migrate old fj_channels format (plain strings) to new dict format
+            
             migrated = False
             new_fj = []
             for entry in bot_settings.get("fj_channels", []):
@@ -366,20 +353,16 @@ def load_db():
             if migrated:
                 bot_settings["fj_channels"] = new_fj
 
-            # Migrate old Bangladesh/BDT settings to India/INR
             inr_migrated = False
-            # Fix w_methods if still bKash/Nagad
             old_methods = bot_settings.get("w_methods", [])
             if any(m.lower() in ["bkash", "nagad"] for m in old_methods):
                 bot_settings["w_methods"] = ["UPI", "Paytm"]
                 inr_migrated = True
-            # Fix custom_messages: replace Bengali text and BDT/TK with English and INR/₹
             cm = bot_settings.get("custom_messages", {})
             for m_key in cm:
                 if isinstance(cm[m_key], dict) and "text" in cm[m_key]:
                     txt = cm[m_key]["text"]
                     if "৳" in txt or "TK" in txt or "tk" in txt or any(ord(c) >= 0x0980 and ord(c) <= 0x09FF for c in txt):
-                        # Reset this message to new default
                         if m_key in DEFAULT_CUSTOM_MESSAGES:
                             cm[m_key]["text"] = DEFAULT_CUSTOM_MESSAGES[m_key]["text"]
                             inr_migrated = True
@@ -389,8 +372,8 @@ def load_db():
                 print("🔄 Migrated old BDT/Bengali settings to INR/English!")
 
             print("✅ Local Stock/UI DB Loaded Successfully!")
-        except Exception as e:
-            print(f"❌ Error loading local DB: {e}")
+    except Exception as e:
+        print(f"❌ Error loading local DB: {e}")
 
 def save_local_db():
     settings_to_save = dict(bot_settings)
@@ -420,15 +403,11 @@ temp_data = {}
 user_cooldowns = {}
 pending_withdrawals = {}
 
-# ==========================================
-# Telegram API & Helpers
-# ==========================================
-tg_session = requests.Session() # 🌟 Keep-Alive Connection (Makes bot 10x faster)
+tg_session = requests.Session()
 
 def api_call(method, payload=None):
     url = f"{BASE_URL}/{method}"
     try:
-        # 🌟 Added timeout to prevent hanging!
         res = tg_session.post(url, json=payload, timeout=15)
         return res.json()
     except Exception as e:
@@ -463,7 +442,6 @@ def send_document(chat_id, filename, text_content):
     except Exception as e:
         print(f"⚠️ send_document failed: {e}")
 
-# 🌟 Local User List for Broadcasts
 all_known_users = set()
 
 def sync_users_list():
@@ -490,13 +468,8 @@ def register_user_local(uid):
     uid_str = str(uid)
     if uid_str not in all_known_users:
         all_known_users.add(uid_str)
-        # 🌟 Non-blocking background save (Prevents lag)
         threading.Thread(target=_save_users_list, daemon=True).start()
 
-
-# ==========================================
-# 🌟 Local User Database (Firebase-Free Mode)
-# ==========================================
 USERS_DB_FILE = "users_db.json"
 WITHDRAWALS_DB_FILE = "withdrawals_db.json"
 local_users_db = {}
@@ -570,7 +543,6 @@ def broadcast_copymessage(from_chat_id, msg_id):
     failed = 0
     users = list(all_known_users)
     
-    # 🌟 Dedicated Connection Pool for Broadcast (Fixes Port Exhaustion & Network Lag)
     b_session = requests.Session()
     url = f"{BASE_URL}/copyMessage"
     
@@ -582,7 +554,7 @@ def broadcast_copymessage(from_chat_id, msg_id):
             else: failed += 1
         except:
             failed += 1
-        time.sleep(0.035) # Safe speed (28 msgs/sec) to prevent Telegram Ban
+        time.sleep(0.035)
         
     send_message(from_chat_id, render_body_text(f"📢 <b>Broadcast Completed!</b>\n✅ Success: {success}\n❌ Failed: {failed}\n👥 Total Sent: {len(users)}"))
 
@@ -651,12 +623,7 @@ def mask_number(num, user_id=None):
     elif len(clean) > 2: return f"{clean[:1]}✦{tag}✦{clean[-1:]}"
     return clean
 
-# ==========================================
-# 🌟 ADVANCED SERVICE & LANGUAGE DETECTION
-# ==========================================
-
 SERVICE_SMS_KEYWORDS = {
-    # 🟢 Social Media & Chat (Added Arabic Keywords)
     "whatsapp": ["whatsapp", "wa", "wap", "w/a", "whatsapp business", "wa.me", "wa code", "wh", "واتساب", "واتساپ", "واٹس ایپ", "व्हाट्सएप", "वाट्सएप", "वॉट्सऐप", "व्हाट्सप्प", "হোয়াটসঅ্যাপ", "হোটসঅ্যাপ", "ватсап", "уотсап", "вотсап", "ватс апп", "వాట్సాప్", "വാട്‌സ്ആപ്പ്", "வாட்ஸ்அப்", "ವಾಟ್ಸಾಪ್", "વોટ્સએપ", "ਵਟਸਐਪ", "ହ୍ଵାଟସ୍ ଆପ୍", "වට්ස්ඇප්", "วอตส์แอปป์", "วอทส์แอพ", "ဝက်စ်အက်ပ်", "វ៉តសាប់", "ວອດແອັບ", "ワッツアップ", "왓츠앱", "whatsapp的", "whatsapp验证码", "וואטסאפ", "γουάτσαπ", "ዋትስአፕ", "ვოთსაფი", "վոթսափ"],
     "facebook": ["facebook", "fb", "meta", "fbook", "fb code", "facebook code", "فيسبوك", "فيس بوك"],
     "instagram": ["instagram", "insta", "ig", "ig code", "instagram code", "انستغرام", "انستقرام"],
@@ -674,15 +641,11 @@ SERVICE_SMS_KEYWORDS = {
     "kakaotalk": ["kakao", "kakaotalk", "كاكاو"],
     "qq": ["qq", "tencent qq"],
     "vk": ["vk", "vkontakte"],
-
-    # 🔵 Tech & Mail
     "google": ["google", "gmail", "youtube", "g-", "google voice", "جوجل", "غوغل"],
     "microsoft": ["microsoft", "ms", "outlook", "live.com", "hotmail"],
     "apple": ["apple", "icloud", "itunes", "apple id"],
     "yahoo": ["yahoo", "yahoo code", "ymail"],
     "protonmail": ["proton", "protonmail"],
-    
-    # 💰 Crypto & Trading
     "binance": ["binance", "bnb", "binances"],
     "coinbase": ["coinbase"],
     "okx": ["okx", "okex"],
@@ -691,8 +654,6 @@ SERVICE_SMS_KEYWORDS = {
     "huobi": ["huobi", "htx"],
     "mexc": ["mexc"],
     "trustwallet": ["trust wallet", "trustwallet"],
-
-    # 💳 Finance & Wallets
     "paytm": ["paytm", "paytm code", "paytm otp"],
     "phonepe": ["phonepe", "phone pe", "phonepe code"],
     "gpay": ["gpay", "google pay", "googlepay"],
@@ -700,8 +661,6 @@ SERVICE_SMS_KEYWORDS = {
     "paypal": ["paypal", "pay pal"],
     "cashapp": ["cash app", "cashapp"],
     "wise": ["wise", "transferwise"],
-
-    # 🛒 E-commerce & Delivery
     "amazon": ["amazon", "amzn", "amazon code"],
     "ebay": ["ebay"],
     "aliexpress": ["aliexpress", "ali express"],
@@ -710,8 +669,6 @@ SERVICE_SMS_KEYWORDS = {
     "foodpanda": ["foodpanda", "food panda"],
     "uber": ["uber", "uber code", "uber verification", "uber eats"],
     "pathao": ["pathao", "pathao ride"],
-
-    # 🎮 Gaming & Entertainment
     "netflix": ["netflix", "netflix code"],
     "spotify": ["spotify", "spotify code"],
     "steam": ["steam", "steam guard"],
@@ -720,15 +677,11 @@ SERVICE_SMS_KEYWORDS = {
     "riotgames": ["riot", "riot games", "valorant", "league of legends"],
     "garena": ["garena", "free fire", "freefire"],
     "playstation": ["playstation", "psn"],
-
-    # 🎲 Betting & Casino
     "1xbet": ["1xbet", "1x bet"],
     "melbet": ["melbet", "melbet code"],
     "linebet": ["linebet"],
     "bet365": ["bet365"],
     "megapari": ["megapari"],
-
-    # ❤️ Dating
     "tinder": ["tinder", "tinder code"],
     "bumble": ["bumble"],
     "badoo": ["badoo"]
@@ -775,68 +728,60 @@ def detect_language(text):
     if not text: return "#EN"
     text_str = str(text)
 
-    # 1. Accurate alphabet detection using Unicode Block (100% Accurate for scripts)
-    if any('\u0600' <= c <= '\u06ff' for c in text_str): return "#AR" # Arabic / Persian / Urdu
-    if any('\u0980' <= c <= '\u09ff' for c in text_str): return "#BN" # Bengali
-    if any('\u0900' <= c <= '\u097f' for c in text_str): return "#HI" # Hindi / Marathi / Nepali
-    if any('\u0a00' <= c <= '\u0a7f' for c in text_str): return "#PA" # Punjabi (Gurmukhi)
-    if any('\u0a80' <= c <= '\u0aff' for c in text_str): return "#GU" # Gujarati
-    if any('\u0b00' <= c <= '\u0b7f' for c in text_str): return "#OR" # Odia
-    if any('\u0b80' <= c <= '\u0bff' for c in text_str): return "#TA" # Tamil
-    if any('\u0c00' <= c <= '\u0c7f' for c in text_str): return "#TE" # Telugu
-    if any('\u0c80' <= c <= '\u0cff' for c in text_str): return "#KN" # Kannada
-    if any('\u0d00' <= c <= '\u0d7f' for c in text_str): return "#ML" # Malayalam
-    if any('\u0d80' <= c <= '\u0dff' for c in text_str): return "#SI" # Sinhala
-    if any('\u0e00' <= c <= '\u0e7f' for c in text_str): return "#TH" # Thai
-    if any('\u0e80' <= c <= '\u0eff' for c in text_str): return "#LO" # Lao
-    if any('\u0f00' <= c <= '\u0fff' for c in text_str): return "#BO" # Tibetan
-    if any('\u1000' <= c <= '\u109f' for c in text_str): return "#MY" # Burmese (Myanmar)
-    if any('\u1200' <= c <= '\u137f' for c in text_str): return "#AM" # Amharic (Ethiopic)
-    if any('\u1780' <= c <= '\u17ff' for c in text_str): return "#KM" # Khmer
-    if any('\u10a0' <= c <= '\u10ff' for c in text_str): return "#KA" # Georgian
-    if any('\u0530' <= c <= '\u058f' for c in text_str): return "#HY" # Armenian
-    if any('\u0590' <= c <= '\u05ff' for c in text_str): return "#HE" # Hebrew
-    if any('\u0370' <= c <= '\u03ff' for c in text_str): return "#EL" # Greek
-    if any('\u0400' <= c <= '\u04ff' for c in text_str): return "#RU" # Russian / Ukrainian (Cyrillic)
-    if any('\u4e00' <= c <= '\u9fff' for c in text_str): return "#ZH" # Chinese
-    if any('\u3040' <= c <= '\u309f' or '\u30a0' <= c <= '\u30ff' for c in text_str): return "#JA" # Japanese
-    if any('\uac00' <= c <= '\ud7af' for c in text_str): return "#KO" # Korean
+    if any('\u0600' <= c <= '\u06ff' for c in text_str): return "#AR"
+    if any('\u0980' <= c <= '\u09ff' for c in text_str): return "#BN"
+    if any('\u0900' <= c <= '\u097f' for c in text_str): return "#HI"
+    if any('\u0a00' <= c <= '\u0a7f' for c in text_str): return "#PA"
+    if any('\u0a80' <= c <= '\u0aff' for c in text_str): return "#GU"
+    if any('\u0b00' <= c <= '\u0b7f' for c in text_str): return "#OR"
+    if any('\u0b80' <= c <= '\u0bff' for c in text_str): return "#TA"
+    if any('\u0c00' <= c <= '\u0c7f' for c in text_str): return "#TE"
+    if any('\u0c80' <= c <= '\u0cff' for c in text_str): return "#KN"
+    if any('\u0d00' <= c <= '\u0d7f' for c in text_str): return "#ML"
+    if any('\u0d80' <= c <= '\u0dff' for c in text_str): return "#SI"
+    if any('\u0e00' <= c <= '\u0e7f' for c in text_str): return "#TH"
+    if any('\u0e80' <= c <= '\u0eff' for c in text_str): return "#LO"
+    if any('\u0f00' <= c <= '\u0fff' for c in text_str): return "#BO"
+    if any('\u1000' <= c <= '\u109f' for c in text_str): return "#MY"
+    if any('\u1200' <= c <= '\u137f' for c in text_str): return "#AM"
+    if any('\u1780' <= c <= '\u17ff' for c in text_str): return "#KM"
+    if any('\u10a0' <= c <= '\u10ff' for c in text_str): return "#KA"
+    if any('\u0530' <= c <= '\u058f' for c in text_str): return "#HY"
+    if any('\u0590' <= c <= '\u05ff' for c in text_str): return "#HE"
+    if any('\u0370' <= c <= '\u03ff' for c in text_str): return "#EL"
+    if any('\u0400' <= c <= '\u04ff' for c in text_str): return "#RU"
+    if any('\u4e00' <= c <= '\u9fff' for c in text_str): return "#ZH"
+    if any('\u3040' <= c <= '\u309f' or '\u30a0' <= c <= '\u30ff' for c in text_str): return "#JA"
+    if any('\uac00' <= c <= '\ud7af' for c in text_str): return "#KO"
 
-    # 2. Language detection using OTP Keywords (Latin script languages)
     text_lower = text_str.lower()
     
-    # Asian / Pacific
-    if any(w in text_lower for w in ["kode verifikasi", "jangan bagikan", "rahasia"]): return "#ID" # Indonesian
-    if any(w in text_lower for w in ["kod pengesahan", "jangan kongsi"]): return "#MS" # Malay
-    if any(w in text_lower for w in ["mã của bạn", "không chia sẻ", "mã xác minh"]): return "#VN" # Vietnamese
-    if any(w in text_lower for w in ["ang iyong code", "huwag ibahagi"]): return "#TL" # Tagalog / Filipino
+    if any(w in text_lower for w in ["kode verifikasi", "jangan bagikan", "rahasia"]): return "#ID"
+    if any(w in text_lower for w in ["kod pengesahan", "jangan kongsi"]): return "#MS"
+    if any(w in text_lower for w in ["mã của bạn", "không chia sẻ", "mã xác minh"]): return "#VN"
+    if any(w in text_lower for w in ["ang iyong code", "huwag ibahagi"]): return "#TL"
+    if any(w in text_lower for w in ["código", "tu código", "verificación", "no compartas"]): return "#ES"
+    if any(w in text_lower for w in ["seu código", "código de verificação", "não compartilhe"]): return "#PT"
+    if any(w in text_lower for w in ["code secret", "ne partagez pas", "votre code"]): return "#FR"
+    if any(w in text_lower for w in ["dein code", "bestätigungscode", "nicht teilen"]): return "#DE"
+    if any(w in text_lower for w in ["il tuo codice", "codice di verifica", "non condividere"]): return "#IT"
+    if any(w in text_lower for w in ["twój kod", "nie udostępniaj", "kod weryfikacyjny"]): return "#PL"
+    if any(w in text_lower for w in ["doğrulama kodu", "paylaşmayın", "onay kodu"]): return "#TR"
+    if any(w in text_lower for w in ["jouw code", "verificatiecode", "niet delen"]): return "#NL"
+    if any(w in text_lower for w in ["din kod", "verifieringskod", "dela inte"]): return "#SV"
+    if any(w in text_lower for w in ["bekræftelseskode", "del ikke"]): return "#DA"
+    if any(w in text_lower for w in ["bekreftelseskode", "ikke del"]): return "#NO"
+    if any(w in text_lower for w in ["vahvistuskoodi", "älä jaa"]): return "#FI"
+    if any(w in text_lower for w in ["váš kód", "ověřovací kód", "nesdílejte"]): return "#CS"
+    if any(w in text_lower for w in ["overovací kód", "nezdieľajte"]): return "#SK"
+    if any(w in text_lower for w in ["ellenőrző kód", "ne oszd meg"]): return "#HU"
+    if any(w in text_lower for w in ["codul tău", "codul de verificare", "nu partaja"]): return "#RO"
+    if any(w in text_lower for w in ["kontrolni kod", "kod za potvrdu", "ne delite"]): return "#HR"
+    if any(w in text_lower for w in ["код за потвърждение", "не споделяйте"]): return "#BG"
+    if any(w in text_lower for w in ["ваш код", "код підтвердження"]): return "#UK"
+    if any(w in text_lower for w in ["msimbo wako", "usishiriki"]): return "#SW"
+    if any(w in text_lower for w in ["verifikasiekode", "moenie deel nie"]): return "#AF"
     
-    # European / Americas
-    if any(w in text_lower for w in ["código", "tu código", "verificación", "no compartas"]): return "#ES" # Spanish
-    if any(w in text_lower for w in ["seu código", "código de verificação", "não compartilhe"]): return "#PT" # Portuguese
-    if any(w in text_lower for w in ["code secret", "ne partagez pas", "votre code"]): return "#FR" # French
-    if any(w in text_lower for w in ["dein code", "bestätigungscode", "nicht teilen"]): return "#DE" # German
-    if any(w in text_lower for w in ["il tuo codice", "codice di verifica", "non condividere"]): return "#IT" # Italian
-    if any(w in text_lower for w in ["twój kod", "nie udostępniaj", "kod weryfikacyjny"]): return "#PL" # Polish
-    if any(w in text_lower for w in ["doğrulama kodu", "paylaşmayın", "onay kodu"]): return "#TR" # Turkish
-    if any(w in text_lower for w in ["jouw code", "verificatiecode", "niet delen"]): return "#NL" # Dutch
-    if any(w in text_lower for w in ["din kod", "verifieringskod", "dela inte"]): return "#SV" # Swedish
-    if any(w in text_lower for w in ["bekræftelseskode", "del ikke"]): return "#DA" # Danish
-    if any(w in text_lower for w in ["bekreftelseskode", "ikke del"]): return "#NO" # Norwegian
-    if any(w in text_lower for w in ["vahvistuskoodi", "älä jaa"]): return "#FI" # Finnish
-    if any(w in text_lower for w in ["váš kód", "ověřovací kód", "nesdílejte"]): return "#CS" # Czech
-    if any(w in text_lower for w in ["overovací kód", "nezdieľajte"]): return "#SK" # Slovak
-    if any(w in text_lower for w in ["ellenőrző kód", "ne oszd meg"]): return "#HU" # Hungarian
-    if any(w in text_lower for w in ["codul tău", "codul de verificare", "nu partaja"]): return "#RO" # Romanian
-    if any(w in text_lower for w in ["kontrolni kod", "kod za potvrdu", "ne delite"]): return "#HR" # Croatian/Serbian
-    if any(w in text_lower for w in ["код за потвърждение", "не споделяйте"]): return "#BG" # Bulgarian
-    if any(w in text_lower for w in ["ваш код", "код підтвердження"]): return "#UK" # Ukrainian
-    
-    # African
-    if any(w in text_lower for w in ["msimbo wako", "usishiriki"]): return "#SW" # Swahili
-    if any(w in text_lower for w in ["verifikasiekode", "moenie deel nie"]): return "#AF" # Afrikaans
-    
-    # 3. Default if none of the above matches
     return "#EN"
 
 def parse_chat_id(text):
@@ -899,7 +844,6 @@ def check_force_join(user_id):
         ch = _get_fj_chat_id(entry)
         res = api_call("getChatMember", {"chat_id": ch, "user_id": user_id})
         if not res.get("ok"):
-            # API error হলে (bot not admin বা অন্য কারণ) — skip করুন, block করবেন না
             continue
         status = res["result"].get("status", "left")
         if status in ["left", "kicked"]:
@@ -935,19 +879,13 @@ def is_user_banned(user_id):
     user_banned_cache[user_id] = {'banned': banned, 'time': time.time()}
     return banned
 
-# ==========================================
-# Captcha Auto Login & Parsing Core
-# ==========================================
 def extract_otp_code(text):
     clean_text = re.sub(r'[\u200B-\u200D\uFEFF]', '', str(text))
 
-    # 1. Multi-part OTPs (e.g. 123-456 or 809-761)
     multi_part = re.search(r'(\d{3}[-\s]+\d{3})|(\d{2}[-\s]+\d{2}[-\s]+\d{2})', clean_text)
     if multi_part:
-        # Keep hyphen (-) if present, but remove spaces and join together
         return multi_part.group(0).replace(" ", "")
 
-    # 2. Keyword-based extraction
     otp_keywords = ['code', 'is', 'otp', 'pin', 'verification', 'auth', 'رمز', 'your code']
     keywords_pattern = '|'.join(otp_keywords)
     keyword_match = re.search(rf'(?:{keywords_pattern})\s*(?:is|:|-|=)?\s*([a-z0-9]{{4,10}})', clean_text, re.I)
@@ -958,11 +896,9 @@ def extract_otp_code(text):
     if keyword_match_rev and keyword_match_rev.group(1).isdigit():
         return keyword_match_rev.group(1)
 
-    # 3. Google OTP
     g_match = re.search(r'G-(\d{6})', clean_text, re.IGNORECASE)
     if g_match: return g_match.group(1)
 
-    # 4. Digit sequences fallback
     digit_matches = re.findall(r'(?<!\d)\d{4,8}(?!\d)', clean_text)
     if digit_matches: return digit_matches[0]
 
@@ -986,11 +922,9 @@ def parse_panel_response(response_text, p_config=None):
                 rows = table.find_all('tr')
                 if not rows: continue
                 
-                # 🌟 Option 1 + Smart HTML Detection: Find correct position using column name and user-given serial
                 final_n_idx = n_idx
                 final_m_idx = m_idx
                 
-                # Check first row (Header) and match actual column serial
                 header_cells = rows[0].find_all(['th', 'td'])
                 for i, cell in enumerate(header_cells):
                     c_text = cell.get_text(strip=True).lower()
@@ -1000,17 +934,14 @@ def parse_panel_response(response_text, p_config=None):
                 for row in rows:
                     cols = row.find_all(['td', 'th'])
                     
-                    # Will not take data from header rows (where all th exist)
                     if all(c.name == 'th' for c in cols): continue
                     
                     if len(cols) > max(final_n_idx, final_m_idx):
-                        # Extract text from HTML table
                         num_text = cols[final_n_idx].get_text(separator=" ", strip=True)
                         msg_text = cols[final_m_idx].get_text(separator=" ", strip=True)
                         
                         clean_num = re.sub(r'\D', '', num_text)
                         
-                        # Ensure number is actually 5-18 digits (to avoid random text)
                         if clean_num and 5 <= len(clean_num) <= 18:
                             otp = extract_otp_code(msg_text)
                             if otp and len(msg_text) > 4:
@@ -1028,7 +959,6 @@ def parse_panel_response(response_text, p_config=None):
                 values = []
                 
                 if isinstance(item, dict):
-                    # 1. First try searching by known JSON Key (e.g.: num, phone, sms)
                     lower_keys = {str(k).lower(): v for k, v in item.items()}
                     for k in ["number", "num", "phone", "msisdn", "sender"]:
                         if k in lower_keys:
@@ -1045,31 +975,25 @@ def parse_panel_response(response_text, p_config=None):
                 elif isinstance(item, list):
                     values = item
 
-                # 2. If not found by Key, then Smart Blind Scan (check all values)
                 for v in values:
                     if isinstance(v, (dict, list)) or v is None: continue
                     v_str = str(v).strip()
                     
-                    # Number Detection: 7 to 18 digits
                     clean_v = re.sub(r'\D', '', v_str)
                     if 7 <= len(clean_v) <= 18 and not re.search(r'[a-zA-Z]', v_str):
-                        # Logic to skip Date/Time/IP
                         if not re.search(r'\d{4}[-/]\d{2}[-/]\d{2}', v_str) and not re.search(r'\d{2}:\d{2}:\d{2}', v_str) and "." not in v_str:
                             if clean_v not in pot_nums_list:
                                 pot_nums_list.append(clean_v)
                     
-                    # Message Detection: more than 5 characters and not just numbers
                     if len(v_str) > 4 and not v_str.isdigit():
                         if extract_otp_code(v_str):
                             if pot_msg is None or len(v_str) > len(pot_msg):
                                 pot_msg = v_str
                                 
-                # 🌟 3. Multiple Numbers Logic (User Priority > Second Number > First Number)
                 pot_num = None
                 if pot_nums_list:
                     matched_user_num = None
                     for n in pot_nums_list:
-                        # Check if this number exists in user assigned number list
                         if n in nexa_assigned_numbers or any(n in str(key) for key in nexa_assigned_numbers.keys()):
                             matched_user_num = n
                             break
@@ -1077,7 +1001,7 @@ def parse_panel_response(response_text, p_config=None):
                     if matched_user_num:
                         pot_num = matched_user_num
                     elif len(pot_nums_list) >= 2:
-                        pot_num = pot_nums_list[1] # If not with user, directly take the second number
+                        pot_num = pot_nums_list[1]
                     else:
                         pot_num = pot_nums_list[0]
                             
@@ -1089,7 +1013,6 @@ def parse_panel_response(response_text, p_config=None):
             def traverse_json(node):
                 if isinstance(node, list):
                     if len(node) > 0 and not isinstance(node[0], (dict, list)):
-                        # It's a flat list representing one record
                         process_item(node)
                     for child in node:
                         if isinstance(child, (dict, list)):
@@ -1102,7 +1025,6 @@ def parse_panel_response(response_text, p_config=None):
 
             traverse_json(data)
             
-            # Remove duplicates
             seen = set()
             for r in temp_results:
                 uid = f"{r['number']}_{r['otp']}"
@@ -1113,7 +1035,6 @@ def parse_panel_response(response_text, p_config=None):
         
     return results
 
-# 🌟 Advanced Automated Background Captcha Solver 🌟
 def attempt_auto_login(p, idx):
     login_url = p.get("login_url", "").strip()
     if not login_url.startswith("http"):
@@ -1133,7 +1054,6 @@ def attempt_auto_login(p, idx):
         soup = BeautifulSoup(res.text, 'html.parser')
         all_text = res.text
         
-        # 1. SOLVE CAPTCHA (Exact bot 3.py logic)
         captcha_match = re.search(r'(\d+\s*[\+\-\*]\s*\d+)\s*[=\?:]', all_text)
         if not captcha_match:
             captcha_match = re.search(r'what is\s*(\d+\s*[\+\-\*]\s*\d+)', all_text, re.I)
@@ -1156,7 +1076,6 @@ def attempt_auto_login(p, idx):
             elif op == '-': answer = str(a - b)
             elif op == '*': answer = str(a * b)
 
-        # 2. FIND FORM
         form = soup.find("form")
         if not form:
             p["login_status"] = "❌ No login form found"
@@ -1203,10 +1122,8 @@ def attempt_auto_login(p, idx):
         if captcha_input and captcha_field:
             form_data[captcha_field] = answer
 
-        # 3. SUBMIT
         login_req = session.post(post_url, data=form_data, allow_redirects=True, timeout=15)
         
-        # 4. VERIFY (Exact bot 3.py check logic)
         msg_link = p.get("msg_link", "").strip()
         if not msg_link.startswith("http") and msg_link != "":
             msg_link = "http://" + msg_link
@@ -1228,7 +1145,6 @@ def attempt_auto_login(p, idx):
             p["login_status"] = "✅ Active & Fetching"
             return True
         else:
-            # Show detected field names to help debug
             uf = user_input.get("name") if user_input else "NOT FOUND"
             pf = pass_input.get("name") if pass_input else "NOT FOUND"
             cf = captcha_input.get("name") if captcha_input else "none"
@@ -1258,13 +1174,12 @@ def panel_monitor_thread():
                             p["last_login_attempt"] = now
                             
                             success = attempt_auto_login(p, idx)
-                            save_db() # Save login status text to show in settings
+                            save_db()
                             if not success:
                                 continue 
                             sess = panel_sessions.get(idx)
                             
                         try:
-                            # 🌟 auto sessions with sAjaxSource and Fallback HTML Parser
                             parsed_data, res_text = fetch_cpt_panel_cdrs(p, sess, p["msg_link"])
                             p["login_status"] = "✅ Active & Fetching"
                         except Exception as e:
@@ -1280,48 +1195,54 @@ def panel_monitor_thread():
                         if not full_url and not url: continue
                         
                         urls_to_try = []
-                        if full_url:
-                            urls_to_try.append(full_url)
-                        else:
-                            if "{token}" in url or "{key}" in url:
-                                urls_to_try.append(url.replace("{token}", token).replace("{key}", token))
-                            elif "token=" in url or "key=" in url:
-                                urls_to_try.append(url)
+                        try:
+                            if full_url:
+                                urls_to_try.append(full_url)
                             else:
-                                sep = '&' if '?' in url else '?'
-                                urls_to_try.append(f"{url}{sep}token={token}")
-                                urls_to_try.append(f"{url}{sep}key={token}&start=0")
-                                urls_to_try.append(f"{url}{sep}key={token}")
+                                if "{token}" in url or "{key}" in url:
+                                    urls_to_try.append(url.replace("{token}", token).replace("{key}", token))
+                                elif "token=" in url or "key=" in url:
+                                    urls_to_try.append(url)
+                                else:
+                                    sep = '&' if '?' in url else '?'
+                                    urls_to_try.append(f"{url}{sep}token={token}")
+                                    urls_to_try.append(f"{url}{sep}key={token}&start=0")
+                                    urls_to_try.append(f"{url}{sep}key={token}")
+                        except Exception as e:
+                            print(f"Error building URLs: {e}")
+                            urls_to_try = []
                             
                         parsed_data = []
-# Browser Bypass (403 Forbidden Fix)
-headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0 Safari/537.36'}
-# Zenex Network requires the API key via a "mapikey" header, not
-zenex_target = full_url or url
-if "zenexnetwork.com" in zenex_target:
-    zenex_key = token
-    try:
-        zenex_key = parse_qs(urlparse(zenex_target).query).get('data')
-    except Exception:
-        zenex_key = ""
-    if zenex_key:
-        headers['mapikey'] = zenex_key
-# ✅ FIX: Add Authorization header for Green SMS API
-if "143.110.245.86" in str(urls_to_try):
-    headers['Authorization'] = f'Bearer {token}'
-for try_url in urls_to_try:
-    try:
-        res = requests.get(try_url, headers=headers, timeout=10)
-        parsed_data = parse_panel_response(res.text, p)
-        if parsed_data:
-            if not full_url and try_url != url and token:
-                p["api_url"] = try_url.replace(token, "{token}")
-                save_db()
-            break
-    except: continue
-if not parsed_data: continue
+                        try:
+                            headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'}
+                            zenex_target = full_url or url
+                            if "zenexnetwork.com" in zenex_target:
+                                zenex_key = token
+                                if not zenex_key:
+                                    try:
+                                        zenex_key = parse_qs(urlparse(zenex_target).query).get('key', [''])[0]
+                                    except Exception:
+                                        zenex_key = ""
+                                if zenex_key:
+                                    headers['mapikey'] = zenex_key
+                            # ✅ FIX: Add Authorization header for Green SMS API
+                            if "143.110.245.86" in str(urls_to_try):
+                                headers['Authorization'] = f'Bearer {token}'
+                            for try_url in urls_to_try:
+                                try:
+                                    res = requests.get(try_url, headers=headers, timeout=10)
+                                    parsed_data = parse_panel_response(res.text, p)
+                                    if parsed_data:
+                                        if not full_url and try_url != url and token:
+                                            p["api_url"] = try_url.replace(token, "{token}")
+                                            save_db()
+                                        break
+                                except:
+                                    continue
+                        except Exception as e:
+                            print(f"Error fetching API data: {e}")
+                        if not parsed_data: continue
                     elif p.get("type") == "VoltX Panel":
-                        # 🌟 VoltX SMS API Panel Monitoring
                         parsed_data = []
                         base_url = p.get("base_url", "").strip()
                         api_key = p.get("api_key", "").strip()
@@ -1359,7 +1280,6 @@ if not parsed_data: continue
                                 continue
                         except Exception as e:
                             continue
-
                     else:
                         continue
                     
@@ -1367,7 +1287,6 @@ if not parsed_data: continue
                         limit = p.get("records", 0)
                         if limit > 0: parsed_data = parsed_data[:limit]
                         
-                    # Per-panel warmup: naye panel ke purane OTPs skip karo
                     panel_needs_warmup = p.get("needs_warmup", False)
                     for item in parsed_data:
                         num = item["number"]
@@ -1378,7 +1297,6 @@ if not parsed_data: continue
                         if unique_id not in processed_otps:
                             _track_processed_otp(unique_id)
                             
-                            # Warmup: first run ya naye panel ke purane OTPs skip karo
                             if first_run or panel_needs_warmup:
                                 continue
                                  
@@ -1394,7 +1312,6 @@ if not parsed_data: continue
                                 "number": num,
                                 "time": current_time
                             })
-                            # Save to local file
                             save_local_db()
                                  
                             display_num = f"+{num}" if not str(num).startswith("+") else str(num)
@@ -1403,8 +1320,6 @@ if not parsed_data: continue
                             owners = []
                             clean_api_num = str(num).replace("+", "").replace(" ", "").replace("-", "").strip()
                             
-                            # 🌟 ALGORITHM FIX: Find owner directly from Active Sessions 
-                            # (Because number gets deleted from Local Stock as soon as it is Assigned)
                             for uid, session_data in user_active_sessions.items():
                                 for act_num in session_data.get("nums", []):
                                     act_clean = str(act_num).replace("+", "").replace(" ", "").replace("-", "").strip()
@@ -1412,7 +1327,6 @@ if not parsed_data: continue
                                         owners.append(uid)
                                         break
                                         
-                            # Check in Nexa as backup 
                             if not owners:
                                 for nexa_n, n_owner in nexa_assigned_numbers.items():
                                     clean_nexa = str(nexa_n).replace("+", "").replace(" ", "").replace("-", "").strip()
@@ -1441,7 +1355,6 @@ if not parsed_data: continue
                                 inbox_msg = render_body_text(f"╔═══════════════╗\n║ {prem_app_html} {get_flag_info_html(display_num)} #{iso} {display_num} {lang}\n╚═══════════════╝")
                                 inbox_kb = [[{"text": f"{otp}", "icon_custom_emoji_id": "5353022963132174959", "copy_text": {"text": otp}, "style": "success"}]]
                                 
-                                # Reward addition logic
                                 reward = float(bot_settings.get("otp_reward", 0.0))
                                 if reward > 0:
                                     update_balance(owner_id, reward)
@@ -1459,7 +1372,6 @@ if not parsed_data: continue
             first_run = False
             panel_warmup_done = True
             print("🧹 Panel warmup done — old OTPs skipped, now processing new ones only.")
-        # Per-panel warmup complete — flag hatao
         for p in bot_settings.get("panels", []):
             if p.get("needs_warmup"):
                 p["needs_warmup"] = False
@@ -1467,10 +1379,6 @@ if not parsed_data: continue
                 print(f"🧹 Panel '{p.get('name')}' warmup done — old OTPs skipped.")
         time.sleep(5) 
 
-# ==========================================
-# User Management
-# ==========================================
-# 🌟 Local User Cache
 user_cache = {}
 
 def get_user(user_id):
@@ -1499,9 +1407,6 @@ def add_referral(inviter_id, new_user_id):
         )
         send_message(inviter_id, render_body_text(ref_msg))
 
-# ==========================================
-# UI Keyboards & Menu Builders
-# ==========================================
 def get_cancel_kb():
     return {"inline_keyboard": [[{"text": "Cancel", "icon_custom_emoji_id": "5267490665117275176", "callback_data": "cancel_state", "style": "danger"}]]}
 
@@ -1528,7 +1433,7 @@ def main_menu(user_id):
     return {"keyboard": kb, "resize_keyboard": True}
 
 def get_admin_text():
-    users_count = len(all_known_users) # 🌟 Zero Cost User Count!
+    users_count = len(all_known_users)
     total_files = len(number_batches)
     available_nums = sum(len(b["numbers"]) for b in number_batches.values())
 
@@ -1579,7 +1484,6 @@ def system_settings_keyboard():
     ]}
 
 def get_user_management_text():
-    # 🌟 Fast & Free User Management Stats!
     total = len(all_known_users)
     
     now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -1831,10 +1735,8 @@ def build_traffic_ui():
                     txt += "│\n"
             txt += "\n"
         
-        # 🌟 FIX: [:3] limit removed, now all services will show buttons below!
         for srv, _, _ in srv_totals: 
             safe_srv = srv[:20] 
-            # To show full name nicely in button
             app_full_name, _ = get_service_info_html(safe_srv, safe_srv)
             kb.append([{"text": f"Explore {app_full_name} Range", "icon_custom_emoji_id": "5190645917711114179", "callback_data": f"exp_rng_{safe_srv}", "style": "success"}])
             
@@ -1844,9 +1746,6 @@ def build_traffic_ui():
     
     return txt, {"inline_keyboard": kb}
 
-# ==========================================
-# Message Handler
-# ==========================================
 def handle_message(msg):
     global total_uploaded_stats
     chat_id = msg["chat"]["id"]
@@ -1856,13 +1755,12 @@ def handle_message(msg):
         return
         
     text = msg.get("text", "")
-    register_user_local(chat_id) # 🌟 Save User locally for Free Broadcasts!
+    register_user_local(chat_id)
 
     if is_user_banned(chat_id):
         send_message(chat_id, render_body_text("🚫 <b>You are banned from using this bot!</b>\nIf you think this is a mistake, please contact support."))
         return
     
-    # --- REFERRAL FIX: Save inviter BEFORE Force Join ---
     if text.startswith("/start"):
         parts = text.split()
         if len(parts) > 1 and parts[1].isdigit():
@@ -1887,7 +1785,6 @@ def handle_message(msg):
     if chat_id in user_states and not is_main_cmd:
         state = user_states[chat_id]
         
-        # 🌟 Auto Captcha Panel Setup Flow 
         if state == "wait_for_cpanel_url" and text:
             temp_data[chat_id]["p_data"]["login_url"] = text.strip()
             user_states[chat_id] = "wait_for_cpanel_user"
@@ -1937,24 +1834,18 @@ def handle_message(msg):
             if text.isdigit():
                 temp_data[chat_id]["p_data"]["msg_col_idx"] = int(text)
                 temp_data[chat_id]["p_data"]["login_status"] = "⏳ Pending Auto-Login..."
-                
-                # Save the panel configuration
                 temp_data[chat_id]["p_data"]["needs_warmup"] = True
                 bot_settings["panels"].append(temp_data[chat_id]["p_data"])
                 save_db()
-                
                 send_message(chat_id, render_body_text(f"{PEM['ok']} <b>Auto Captcha Panel Added Successfully!</b>\nBot will now automatically solve captcha and login in background."), reply_markup=main_menu(chat_id))
-                
                 msg_id = temp_data[chat_id]["msg_id"]
                 handle_callback({"message": {"chat": {"id": chat_id}, "message_id": msg_id}, "data": "manage_cpt_panels", "id": "internal"})
-                
                 del user_states[chat_id]
                 del temp_data[chat_id]
             else:
                  send_message(chat_id, render_body_text("❌ Please enter a valid number serial!"), reply_markup=get_cancel_kb())
             return
 
-        # --- User Management Flows ---
         elif state == "wait_for_um_bal_uid" and text:
             target_uid_str = text.strip()
             if not target_uid_str.isdigit():
@@ -1998,9 +1889,7 @@ def handle_message(msg):
             current_status = user_data.get("banned", False)
             new_status = not current_status
             _update_local_user(target_uid, {"banned": new_status})
-            
             user_banned_cache[target_uid] = {'banned': new_status, 'time': time.time()}
-            
             status_text = "BANNED 🚫" if new_status else "UNBANNED ✅"
             send_message(chat_id, render_body_text(f"✅ User {target_uid} has been {status_text}!"), reply_markup=main_menu(chat_id))
             del user_states[chat_id]
@@ -2031,17 +1920,13 @@ def handle_message(msg):
             del temp_data[chat_id]
             return
 
-        # --- Menu Design Flow ---
         elif state == "wait_for_menu_text" and text:
             try:
                 menu_key = temp_data[chat_id]["menu_key"]
                 formatted_html_text = extract_premium_html(msg)
-                
                 bot_settings["custom_messages"][menu_key]["text"] = formatted_html_text
                 save_db()
-                
                 delete_message(chat_id, msg["message_id"])
-                
                 preview_text = render_body_text(formatted_html_text)
                 success_text = f"{PEM['ok']} <b>Message Body Updated successfully!</b>\n\n🎨 <b>Editing: {menu_key.upper()}</b>\n\nPreview of current Text:\n{preview_text}"
                 edit_message(chat_id, temp_data[chat_id]["msg_id"], render_body_text(success_text), reply_markup=menu_edit_options_keyboard(menu_key))
@@ -2379,10 +2264,7 @@ def handle_message(msg):
 
         elif state == "wait_for_add_fj" and text:
             raw_input = text.strip()
-            # Handle private invite links (https://t.me/+xxx or https://t.me/joinchat/xxx)
             if "t.me/+" in raw_input or "t.me/joinchat/" in raw_input:
-                # For private invite links, we need the numeric chat_id
-                # Admin must also provide numeric ID for private chats
                 delete_message(chat_id, msg["message_id"])
                 edit_message(chat_id, temp_data[chat_id]["msg_id"], render_body_text("⚠️ <b>Private invite link detected!</b>\n\nPrivate channel/group ke liye numeric ID bhejein (e.g. <code>-1001234567890</code>)\n\nID kaise pata karein:\n1. Channel/Group mein koi message forward karein\n2. @userinfobot ko forward karein\n3. Woh aapko ID de dega"), reply_markup={"inline_keyboard": [[{"text": "Cancel", "icon_custom_emoji_id": "5267490665117275176", "callback_data": "manage_fj", "style": "danger"}]]})
                 return
@@ -2549,10 +2431,6 @@ def handle_message(msg):
             del temp_data[chat_id]
             return
 
-
-        # ==========================================
-        # 🌟 VoltX Panel Edit State Handlers
-        # ==========================================
         elif state == "wait_for_voltx_base_url" and text:
             idx = temp_data[chat_id]["p_idx"]
             bot_settings["panels"][idx]["base_url"] = text.strip().rstrip("/")
@@ -2610,7 +2488,6 @@ def handle_message(msg):
             del user_states[chat_id]; del temp_data[chat_id]
             return
 
-        # 🌟 VoltX Services State Handlers
         elif state == "wait_vx_srv_name" and text:
             srv = text.strip()
             msg_id = temp_data[chat_id]["msg_id"]
@@ -2673,14 +2550,12 @@ def handle_message(msg):
             wait_msg = send_message(chat_id, render_body_text("⌛ <i>Processing... Finding Number...</i>"))
             wait_msg_id = wait_msg.get("result", {}).get("message_id")
             
-            # 🌟 1. First search number from Local (for any country)
             found_indices = []
             for b_id, b_data in number_batches.items():
                 for idx, n_obj in enumerate(b_data["numbers"]):
                     if n_obj["num"].replace("+", "").startswith(query) and chat_id not in n_obj.get("used_by", []):
                         found_indices.append((b_id, idx))
 
-            # Recycle: if no available numbers, reset all matching numbers and re-search
             if not found_indices:
                 has_matching = False
                 for b_id, b_data in number_batches.items():
@@ -2697,7 +2572,6 @@ def handle_message(msg):
 
             fetched_nums = []
             if not found_indices:
-                # 🌟 2. If not found in Local, then check if can get from Nexa
                 allowed_countries = bot_settings.get("search_countries", [])
                 
                 is_nexa_allowed = False
@@ -2773,7 +2647,7 @@ def handle_message(msg):
                 _, iso = get_flag_and_code(num)
                 display_num = f"+{num}" if not num.startswith("+") else num
                 
-                emoji_id = "5780471598922337683" # Default Flag
+                emoji_id = "5780471598922337683"
                 for flag_code, flag_data in flags_db.items():
                     if iso == flag_data.get("iso"):
                         if "id" in flag_data: emoji_id = flag_data["id"]
@@ -2870,15 +2744,12 @@ def handle_message(msg):
             update_balance(chat_id, -amount)
             pending_withdrawals[req_id] = {"user_id": chat_id, "amount": amount, "method": method, "number": number, "full_name": full_name}
             
-            # Save withdrawal to local DB
             _save_local_withdrawal(req_id, {"user_id": str(chat_id), "amount": amount, "method": method, "status": "pending"})
                 
             admin_msg = f"🎙 <b>NEW WITHDRAWAL REQUEST</b>\n\n👤 <b>USER:</b> <a href='tg://user?id={chat_id}'>{full_name}</a>\n💳 <b>WITHDRAWAL:</b> {amount} INR\n🍏 <b>NUMBER:</b> <code>{number}</code>\n🏦 <b>METHOD:</b> {method}\n\n🧾 <b>REQ ID:</b> {req_id}\n👨‍⚖️ <b>PROCESSED BY ADMIN</b>"
             wd_kb = {"inline_keyboard": [[{"text": "APPROVE", "icon_custom_emoji_id": "5352694861990501856", "callback_data": f"wapp_{req_id}", "style": "success"}, {"text": "REJECT", "icon_custom_emoji_id": "5420130255174145507", "callback_data": f"wrej_{req_id}", "style": "danger"}]]}
             rendered_admin_msg = render_body_text(admin_msg)
-            # Track all sent message IDs for later editing on approve/reject
-            sent_messages = []  # list of {"chat_id": ..., "message_id": ...}
-            # Send to withdrawal group
+            sent_messages = []
             if bot_settings.get("w_group"):
                 try:
                     res = send_message(bot_settings["w_group"], rendered_admin_msg, reply_markup=wd_kb)
@@ -2889,7 +2760,6 @@ def handle_message(msg):
                             try: send_message(adm_id, render_body_text(f"⚠️ W.GROUP ({bot_settings['w_group']}) mein message send fail hua! Group ID check karein."))
                             except: pass
                 except: pass
-            # Send DM to each admin
             for adm_id in bot_settings.get("admins", []):
                 if adm_id != chat_id:
                     try:
@@ -2911,11 +2781,9 @@ def handle_message(msg):
             del temp_data[chat_id]
             return
 
-    # --- Regular Commands ---
     if text.startswith("/start"):
         get_user(chat_id)
         
-        # --- PROCESS PENDING REFERRAL ---
         u_data = _get_local_user(chat_id)
         if u_data.get("referred_by") and not u_data.get("ref_paid"):
             inviter = u_data["referred_by"]
@@ -3008,7 +2876,7 @@ def handle_message(msg):
             apps_db = bot_settings.get("premium_apps", {})
             kb = []
             for s in all_services:
-                emoji_id = "5352694861990501856" # Default icon
+                emoji_id = "5352694861990501856"
                 for app_key, app_data in apps_db.items():
                     if s.upper() == app_key or s.upper() in app_key or app_key in s.upper():
                         if "id" in app_data:
@@ -3064,13 +2932,11 @@ def expire_previous_number(chat_id):
         prev_msg_id = prev_data["msg_id"]
         nums = prev_data["nums"]
         
-        # Remove from Nexa system so no more messages go to inbox
         for num in nums:
             if num in nexa_assigned_numbers:
                 del nexa_assigned_numbers[num]
         save_db()
         
-        # Edit previous message and add Expired button
         kb = [[{"text": "Number Expired", "icon_custom_emoji_id": "5336997731481193790", "callback_data": "ignore", "style": "danger"}]]
         try:
             edit_message(chat_id, prev_msg_id, render_body_text("╔═══════════════╗\n║ 💬 Waiting For SMS...\n╚═══════════════╝"), reply_markup={"inline_keyboard": kb})
@@ -3078,16 +2944,12 @@ def expire_previous_number(chat_id):
             pass
         del user_active_sessions[chat_id]
 
-# ==========================================
-# Callback Query Handler
-# ==========================================
 def handle_callback(call):
     global total_assigned_stats
     chat_id = call["message"]["chat"]["id"]
     chat_type = call["message"]["chat"].get("type", "private")
     data = call.get("data", "")
 
-    # 🌟 Button Loading Fix: Give Response to Telegram immediately when button pressed, so button does not get stuck!
     if not data.startswith("test_p_conn_") and not data.startswith("c_n_") and not data.startswith("g_c_"):
         try: threading.Thread(target=answer_callback, args=(call["id"],)).start()
         except: pass
@@ -3111,7 +2973,6 @@ def handle_callback(call):
             delete_message(chat_id, msg_id)
             send_message(chat_id, render_body_text(f"{PEM['ok']} Thanks for joining! You can now use the bot."), reply_markup=main_menu(chat_id))
             
-            # --- PROCESS PENDING REFERRAL ---
             u_data = _get_local_user(chat_id)
             if u_data.get("referred_by") and not u_data.get("ref_paid"):
                 inviter = u_data["referred_by"]
@@ -3249,7 +3110,6 @@ def handle_callback(call):
             answer_callback(call["id"], "❌ No recent numbers found for this country!", show_alert=True)
             return
             
-        # Only take range from Nexa Services (not Search Countries, as those only have country codes)
         known_ranges = set()
         for s_name, c_dict in bot_settings.get("nexa_services", {}).items():
             for c_name, r_list in c_dict.items():
@@ -3276,7 +3136,6 @@ def handle_callback(call):
         
         kb = []
         for r, count in r_list:
-            # One button per line
             kb.append([{"text": f"{r} ({count})", "icon_custom_emoji_id": "5352862640592949843", "copy_text": {"text": r}, "style": "primary"}])
             
         kb.append([{"text": "Back", "icon_custom_emoji_id": "5267490665117275176", "callback_data": f"exp_rng_{srv_query}", "style": "danger"}])
@@ -3287,7 +3146,6 @@ def handle_callback(call):
         edit_message(chat_id, msg_id, render_body_text(f"📊 <b>Ranges for {prem_app_html} {app_full_name} - {prem_flag_html} {iso_query}</b>\n\nClick on any range to copy it."), reply_markup={"inline_keyboard": kb})
         answer_callback(call["id"])
 
-    # --- User Management Flows Integration ---
     elif data == "user_management":
         edit_message(chat_id, msg_id, get_user_management_text(), reply_markup=user_management_keyboard())
 
@@ -3306,7 +3164,6 @@ def handle_callback(call):
         temp_data[chat_id] = {"msg_id": msg_id}
         edit_message(chat_id, msg_id, render_body_text("📝 Send the User ID to View Profile:"), reply_markup=get_cancel_kb())
 
-    # --- Menu Design Integration ---
     elif data == "menu_design_list":
         edit_message(chat_id, msg_id, render_body_text(f"🎨 <b>Menu Design Editor</b>\n\nSelect a menu block to edit its Body Text and Inline Buttons. You can use Premium Emojis too!"), reply_markup=menu_design_list_keyboard())
 
@@ -3560,10 +3417,6 @@ def handle_callback(call):
     elif data == "system_settings":
         edit_message(chat_id, msg_id, render_body_text(f"{PEM['gear']} <b>System Settings</b>\nManage advanced bot configurations below:"), reply_markup=system_settings_keyboard())
 
-
-    # ==========================================
-    # 🌟 VoltX Services Management Callbacks
-    # ==========================================
     elif data == "manage_vx_srv":
         if "voltx_services" not in bot_settings: bot_settings["voltx_services"] = {}
         vx_srvs = bot_settings["voltx_services"]
@@ -3660,7 +3513,6 @@ def handle_callback(call):
         handle_callback({"message": call["message"], "data": f"vx_srv_{srv}", "id": "internal"})
 
     elif data.startswith("manage_vx_srv_"):
-        # Panel-specific VoltX services (from panel_config_keyboard button)
         idx = int(data.split("_")[3])
         handle_callback({"message": call["message"], "data": "manage_vx_srv", "id": call["id"]})
 
@@ -4017,10 +3869,6 @@ def handle_callback(call):
         temp_data[chat_id] = {"msg_id": msg_id, "p_idx": idx}
         edit_message(chat_id, msg_id, render_body_text("📝 Send the number of records to fetch (e.g. 10).\nType <code>0</code> for Unlimited:"), reply_markup={"inline_keyboard": [[{"text": "Cancel", "icon_custom_emoji_id": "5267490665117275176", "callback_data": f"conf_pnl_{idx}", "style": "danger"}]]})
 
-
-    # ==========================================
-    # 🌟 VoltX Panel Edit Callbacks
-    # ==========================================
     elif data.startswith("set_p_vbase_"):
         idx = int(data.split("_")[3])
         user_states[chat_id] = "wait_for_voltx_base_url"
@@ -4098,7 +3946,6 @@ def handle_callback(call):
                 if not msg_link.startswith("http") and msg_link != "": msg_link = "http://" + msg_link
                 check_url = msg_link if msg_link else f"{login_url.split('/login')[0]}/client/SMSCDRStats"
 
-                # Try up to 2 times: once with existing session, once after fresh login
                 for attempt in range(2):
                     if not sess:
                         success = attempt_auto_login(p, idx)
@@ -4109,16 +3956,14 @@ def handle_callback(call):
                             return
                         sess = panel_sessions.get(idx)
                     try:
-                        # 🌟 test connection supports sAjaxSource & HTML table parser
                         parsed, raw_text = fetch_cpt_panel_cdrs(p, sess, check_url)
-                        break  # success — exit retry loop
+                        break
                     except Exception as sess_err:
                         if "Session expired" in str(sess_err) and attempt == 0:
-                            # Session expired — clear and re-login on next attempt
                             if idx in panel_sessions: del panel_sessions[idx]
                             sess = None
                             continue
-                        raise  # re-raise on second attempt or other errors
+                        raise
 
             else:
                 full_url = p.get("full_api_url", "").strip()
@@ -4130,44 +3975,53 @@ def handle_callback(call):
                     return
                 
                 urls_to_try = []
-                if full_url:
-                    urls_to_try.append(full_url)
-                else:
-                    if "{token}" in url or "{key}" in url:
-                        urls_to_try.append(url.replace("{token}", token).replace("{key}", token))
-                    elif "token=" in url or "key=" in url:
-                        urls_to_try.append(url)
+                try:
+                    if full_url:
+                        urls_to_try.append(full_url)
                     else:
-                        sep = '&' if '?' in url else '?'
-                        urls_to_try.append(f"{url}{sep}token={token}")
-                        urls_to_try.append(f"{url}{sep}key={token}&start=0")
-                        urls_to_try.append(f"{url}{sep}key={token}")
+                        if "{token}" in url or "{key}" in url:
+                            urls_to_try.append(url.replace("{token}", token).replace("{key}", token))
+                        elif "token=" in url or "key=" in url:
+                            urls_to_try.append(url)
+                        else:
+                            sep = '&' if '?' in url else '?'
+                            urls_to_try.append(f"{url}{sep}token={token}")
+                            urls_to_try.append(f"{url}{sep}key={token}&start=0")
+                            urls_to_try.append(f"{url}{sep}key={token}")
+                except Exception as e:
+                    print(f"Error building URLs: {e}")
+                    urls_to_try = []
                     
                 parsed = []
                 raw_text = ""
-                headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'}
-                # 🌟 Zenex Network requires the API key via a "mapikey" header, not a URL param
-                zenex_target = full_url or url
-                if "zenexnetwork.com" in zenex_target:
-                    zenex_key = token
-                    if not zenex_key:
+                try:
+                    headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'}
+                    zenex_target = full_url or url
+                    if "zenexnetwork.com" in zenex_target:
+                        zenex_key = token
+                        if not zenex_key:
+                            try:
+                                zenex_key = parse_qs(urlparse(zenex_target).query).get('key', [''])[0]
+                            except Exception:
+                                zenex_key = ""
+                        if zenex_key:
+                            headers['mapikey'] = zenex_key
+                    if "143.110.245.86" in str(urls_to_try):
+                        headers['Authorization'] = f'Bearer {token}'
+                    for try_url in urls_to_try:
                         try:
-                            zenex_key = parse_qs(urlparse(zenex_target).query).get('key', [''])[0]
-                        except Exception:
-                            zenex_key = ""
-                    if zenex_key:
-                        headers['mapikey'] = zenex_key
-                for try_url in urls_to_try:
-                    try:
-                        res = requests.get(try_url, headers=headers, timeout=10)
-                        raw_text = res.text
-                        parsed = parse_panel_response(raw_text, p)
-                        if parsed:
-                            if not full_url and try_url != url and token:
-                                p["api_url"] = try_url.replace(token, "{token}")
-                                save_db()
-                            break
-                    except: pass
+                            res = requests.get(try_url, headers=headers, timeout=10)
+                            raw_text = res.text
+                            parsed = parse_panel_response(raw_text, p)
+                            if parsed:
+                                if not full_url and try_url != url and token:
+                                    p["api_url"] = try_url.replace(token, "{token}")
+                                    save_db()
+                                break
+                        except:
+                            continue
+                except Exception as e:
+                    print(f"Error fetching API data: {e}")
                  
             if wait_msg_id: delete_message(chat_id, wait_msg_id)
                  
@@ -4269,7 +4123,7 @@ def handle_callback(call):
         flags_db = bot_settings.get("premium_flags", {})
         kb = []
         for c in all_countries:
-            emoji_id = "5780471598922337683" # Default flag
+            emoji_id = "5780471598922337683"
             for flag_code, flag_data in flags_db.items():
                 iso = flag_data.get("iso", "").upper()
                 name = flag_data.get("name", "").upper()
@@ -4288,19 +4142,14 @@ def handle_callback(call):
         edit_message(chat_id, msg_id, txt, reply_markup={"inline_keyboard": kb})
 
     elif data.startswith("g_c_") or data.startswith("c_n_"):
-        # 1. Global cooldown check (for all number methods)
         now = time.time()
         if now - user_cooldowns.get(chat_id, 0) < bot_settings["cooldown"]:
             answer_callback(call["id"], f"⌛ Please wait {int(bot_settings['cooldown'] - (now - user_cooldowns.get(chat_id, 0)))}s.", show_alert=True)
             return
         
-        # Cooldown update
         user_cooldowns[chat_id] = now
-        
-        # Expire previous number
         expire_previous_number(chat_id)
 
-        # If coming from search number
         if data.startswith("c_n_s_"):
             parts_s = data.split("_")
             query = parts_s[3]
@@ -4320,7 +4169,6 @@ def handle_callback(call):
                     if n_obj["num"].replace("+", "").startswith(query) and chat_id not in n_obj.get("used_by", []):
                         found_indices.append((b_id, idx))
 
-            # Recycle: if no available numbers, reset all matching numbers
             if not found_indices:
                 has_matching = False
                 for b_id, b_data in number_batches.items():
@@ -4411,20 +4259,17 @@ def handle_callback(call):
             user_active_sessions[chat_id] = {"msg_id": wait_msg_id, "nums": fetched_nums}
             return
 
-        # If coming from upload or service
         parts = data.split("_")
         service = parts[2]
         country = parts[3]
 
         available_indices = []
-        # Check Local Stock First
         for b_id, b_data in number_batches.items():
             if b_data["service"] == service and b_data["country"] == country:
                 for idx, n_obj in enumerate(b_data["numbers"]):
                     if chat_id not in n_obj.get("used_by", []):
                         available_indices.append((b_id, idx))
 
-        # Recycle: if no available numbers, reset all matching numbers
         if not available_indices:
             has_matching = False
             for b_id, b_data in number_batches.items():
@@ -4439,21 +4284,17 @@ def handle_callback(call):
                         for idx, n_obj in enumerate(b_data["numbers"]):
                             available_indices.append((b_id, idx))
 
-        # IF NO LOCAL STOCK, Check Nexa Services
         if not available_indices:
             nexa_srv_data = bot_settings.get("nexa_services", {}).get(service, {}).get(country)
             if nexa_srv_data and len(nexa_srv_data) > 0:
                 random_range = random.choice(nexa_srv_data)
-                # Redirect to Nexa Search Flow (Reset cooldown to prevent block)
                 user_cooldowns[chat_id] = 0
                 handle_callback({"message": call["message"], "data": f"c_n_s_{random_range}_{service}", "id": call["id"]})
                 return
 
-            # 🌟 Check VoltX Services as fallback
             voltx_srv_data = bot_settings.get("voltx_services", {}).get(service, {}).get(country)
             if voltx_srv_data and len(voltx_srv_data) > 0:
                 random_prefix = random.choice(voltx_srv_data)
-                # Find an ON VoltX Panel
                 vx_panel = next((p for p in bot_settings["panels"] if p.get("type") == "VoltX Panel" and p.get("status") == "ON" and p.get("base_url") and p.get("api_key")), None)
                 if not vx_panel:
                     answer_callback(call["id"], "❌ No active VoltX Panel found! Please configure & turn ON a VoltX Panel from Admin Panel.", show_alert=True)
@@ -4507,7 +4348,6 @@ def handle_callback(call):
                                     user_active_sessions[chat_id] = {"msg_id": msg_id, "nums": [num_str]}
                                     return
                             else:
-                                # API responded but no number available
                                 err_msg = vx_data.get("meta", {}).get("message", "No number available")
                                 answer_callback(call["id"], f"❌ {err_msg}", show_alert=True)
                         else:
@@ -4557,7 +4397,7 @@ def handle_callback(call):
             _, iso = get_flag_and_code(num)
             display_num = f"+{num}" if not num.startswith("+") else num
             
-            emoji_id = "5780471598922337683" # Default Flag
+            emoji_id = "5780471598922337683"
             for flag_code, flag_data in flags_db.items():
                 if iso == flag_data.get("iso"):
                     if "id" in flag_data: emoji_id = flag_data["id"]
@@ -4576,18 +4416,15 @@ def handle_callback(call):
         kb.append([{"text": "Close", "icon_custom_emoji_id": "5420130255174145507", "callback_data": "close_msg", "style": "danger"}])
         
         text_numbers = render_body_text("╔═══════════════╗\n║ 💬 Waiting For SMS...\n╚═══════════════╝")
-        # Always edit message (no new message even on Change Number)
         try:
             edit_message(chat_id, msg_id, text_numbers, reply_markup={"inline_keyboard": kb})
             user_active_sessions[chat_id] = {"msg_id": msg_id, "nums": fetched_nums}
         except:
-            # If message edit not possible (e.g. very old message), then send new message
             msg_res = send_message(chat_id, text_numbers, reply_markup={"inline_keyboard": kb})
             if msg_res and "result" in msg_res:
                 user_active_sessions[chat_id] = {"msg_id": msg_res["result"]["message_id"], "nums": fetched_nums}
 
     elif data.startswith("wapp_") or data.startswith("wrej_"):
-        # Admin check (need to check User ID)
         user_id_clicked = call["from"]["id"]
         if not is_admin(user_id_clicked):
             answer_callback(call["id"], "🚫 Only Bot Admins can process withdrawals!", show_alert=True)
@@ -4612,11 +4449,9 @@ def handle_callback(call):
             new_text = f"🎙 <b>WITHDRAWAL {status_text}</b>\n\n👤 <b>USER:</b> <a href='tg://user?id={u_id}'>{full_name}</a>\n💳 <b>WITHDRAWAL:</b> {amt} INR\n🍏 <b>NUMBER:</b> <code>{masked_num}</code>\n🏦 <b>METHOD:</b> {req_data['method']}\n\n🧾 <b>REQ ID:</b> {req_id}\n👨‍⚖️ <b>PROCESSED BY ADMIN</b>"
             rendered_new_text = render_body_text(new_text)
             
-            # Edit ALL sent messages (w_group + admin DMs) — remove APPROVE/REJECT buttons
             for sm in req_data.get("sent_messages", []):
                 try: edit_message(sm["chat_id"], sm["message_id"], rendered_new_text)
                 except: pass
-            # Also edit the current message where admin clicked
             try: edit_message(chat_id, msg_id, rendered_new_text)
             except: pass
             
@@ -4632,12 +4467,9 @@ def handle_callback(call):
         else:
             answer_callback(call["id"], "❌ Request already processed!", show_alert=True)
 
-# ==========================================
-# Polling Loop
-# ==========================================
 def poll_otp_with_status(number_id, num_str, owner_id, api_key):
     headers = {"X-API-Key": api_key}
-    for _ in range(150): # 150 * 4 seconds = 10 Minutes Polling
+    for _ in range(150):
         try:
             res = requests.get(f"{NEXA_BASE_URL}/api/v1/numbers/{number_id}/sms", headers=headers, timeout=10)
             data = res.json()
@@ -4645,12 +4477,10 @@ def poll_otp_with_status(number_id, num_str, owner_id, api_key):
                 otp = str(data["otp"])
                 msg_text = data.get("message", f"Your code is {otp}")
                 
-                # 🌟 Fix to find OTP with dash or large OTP from full message
                 extracted_otp = extract_otp_code(msg_text)
                 if extracted_otp and len(extracted_otp) > len(otp):
                     otp = extracted_otp
                     
-                # 🌟 Fix to detect service/app from full message
                 app_name = data.get("service", "Nexa Service")
                 detected_app = detect_service(msg_text)
                 if detected_app:
@@ -4725,7 +4555,6 @@ def global_sms_listener():
                             num = str(item.get("number", "")).replace("+", "")
                             msg_text = str(item.get("sms", ""))
                             
-                            # 🌟 Fix to detect service/app from full message
                             app_name = item.get("app_name", "Unknown")
                             detected_app = detect_service(msg_text)
                             if detected_app:
@@ -4737,7 +4566,6 @@ def global_sms_listener():
                             if unique_id not in processed_otps and num:
                                 _track_processed_otp(unique_id)
                                 
-                                # Warmup: first run me skip karo
                                 if first_run:
                                     continue
                                 
@@ -4755,7 +4583,6 @@ def global_sms_listener():
                                 owner_id = None
                                 clean_api_num = str(num).replace("+", "").replace(" ", "").replace("-", "").strip()
                                 
-                                # 1. Find owner from Active Sessions
                                 for uid, session_data in user_active_sessions.items():
                                     for act_num in session_data.get("nums", []):
                                         act_clean = str(act_num).replace("+", "").replace(" ", "").replace("-", "").strip()
@@ -4764,7 +4591,6 @@ def global_sms_listener():
                                             break
                                     if owner_id: break
                                     
-                                # 2. Find owner in Nexa/API (Persistent Backup)
                                 if not owner_id:
                                     for nexa_n, n_owner in nexa_assigned_numbers.items():
                                         clean_nexa = str(nexa_n).replace("+", "").replace(" ", "").replace("-", "").strip()
@@ -4808,7 +4634,6 @@ def global_sms_listener():
         time.sleep(5)
 
 def flush_old_updates():
-    """Skip all pending Telegram updates so old messages are not reprocessed on restart."""
     try:
         res = api_call("getUpdates?offset=-1&timeout=0")
         if res and "result" in res and res["result"]:
@@ -4826,14 +4651,12 @@ def main():
     if res.get("ok"): BOT_USERNAME = res["result"]["username"]
     print(f"🤖 Bot is starting... @{BOT_USERNAME}")
     
-    # 🧹 Flush old updates BEFORE starting background threads
     flush_old_updates()
     
     threading.Thread(target=panel_monitor_thread, daemon=True).start()
     threading.Thread(target=global_sms_listener, daemon=True).start()
     print("📡 Background APIs & Global SMS Listener Started!")
     
-    # 🌟 PRO-LEVEL FAST SYSTEM: 500 Workers Pool
     executor = ThreadPoolExecutor(max_workers=500)
     
     offset = None
@@ -4850,16 +4673,13 @@ def main():
         except Exception as e:
             time.sleep(2)
 
-# ==========================================
-# Keep-Alive Web Server (UptimeRobot ping)
-# ==========================================
 class KeepAliveHandler(BaseHTTPRequestHandler):
     def do_GET(self):
         self.send_response(200)
         self.end_headers()
         self.wfile.write(b"Bot is running!")
     def log_message(self, format, *args):
-        pass  # लग स्पैम बंद
+        pass
 
 def run_keep_alive():
     PORT = int(os.environ.get("PORT", 8000))
