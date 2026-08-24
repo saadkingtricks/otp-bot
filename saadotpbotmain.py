@@ -89,7 +89,7 @@ DEFAULT_CUSTOM_MESSAGES = {
     "select_country": {"text": f"📌 Select a country for {{service}}:", "buttons": []}, 
     "search_number": {"text": f"{PEM['num']} <b>Search Number</b>\n\nEnter 3 to 9 digits to search for a number (e.g., 880, 9227373):", "buttons": []},
     "traffic": {"text": f"{PEM['graph']} <b>Traffic Overview</b>\n\n{PEM['ok']} Available Numbers: {{avail}}\n{PEM['rocket']} Assigned Numbers: {{assigned}}", "buttons": []},
-    "refer": {"text": f"➖➖➖➖➖➖➖\n« {PEM['gift']} REFER & EARN »\n➖➖➖➖➖➖➖\n{PEM['link']} YOUR LINK:\n<code>{{ref_link}}</code>\n➖➖➖➖➖➖➖\n{PEM['user']} TOTAL REFERS: <b>{{total_ref}}</b>\n➖➖➖➖➖➖➖\n{PEM['money']} PER REFER: <b>{{ref_reward}} ₹</b>\n➖➖➖➖➖➖➖", "buttons": []},
+    "refer": {"text": f"➖➖➖➖➖➖➖\n« {PEM['gift']} REFER & EARN »\n➖➖➖➖➖➖➖\n{PEM['link']} YOUR LINK:\n<code>{{ref_link}}</code>\n➖➖➖➖➖➖➖\n{PEM['user']} TOTAL REFERS: <b>{{total_ref}}</b>\n➖➖➖➖➖➖➖\n{PEM['money']} PER REFER: <b>{{ref_reward}} $</b>\n➖➖➖➖➖➖➖", "buttons": []},
     "withdrawal": {"text": "➖➖➖➖➖➖➖\n《 💰 WITHDRAWAL 》\n➖➖➖➖➖➖➖\n📱 Total OTP: {total_otp}\n➖➖➖➖➖➖➖\n👥 Total Refer: {total_ref}\n➖➖➖➖➖➖➖\n💰 BALANCE: {bal} $\n➖➖➖➖➖➖➖\n🔐 MINIMUM: {min_w} $\n➖➖➖➖➖➖➖\n💳 SELECT WALLET:", "buttons": []},
     "support": {"text": f"📢 <b>Join Our Channel:</b>\n<a href=\"https://t.me/skcybersecuritytricks\">SAAD KING TRICKS</a>\n\nFor any help, contact our support team.", "buttons": []}
 }
