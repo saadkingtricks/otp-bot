@@ -92,7 +92,7 @@ DEFAULT_CUSTOM_MESSAGES = {
     "traffic": {"text": f"{PEM['graph']} <b>Traffic Overview</b>\n\n{PEM['ok']} Available Numbers: {{avail}}\n{PEM['rocket']} Assigned Numbers: {{assigned}}", "buttons": []},
     "refer": {"text": f"➖➖➖➖➖➖➖\n« {PEM['gift']} REFER & EARN »\n➖➖➖➖➖➖➖\n{PEM['link']} YOUR LINK:\n<code>{{ref_link}}</code>\n➖➖➖➖➖➖➖\n{PEM['user']} TOTAL REFERS: <b>{{total_ref}}</b>\n➖➖➖➖➖➖➖\n{PEM['money']} PER REFER: <b>{{ref_reward}} ₹</b>\n➖➖➖➖➖➖➖", "buttons": []},
     "withdrawal": {"text": "➖➖➖➖➖➖➖\n《 😒 WITHDRAWAL 》\n➖➖➖➖➖➖➖\n👋 Total Otp: {total_otp}\n➖➖➖➖➖➖➖\n🫂 Total Reffer :{total_ref}\n➖➖➖➖➖➖➖\n📅 BALANCE: {bal}₹\n➖➖➖➖➖➖➖\n🔐 MINIMUM: {min_w} ₹\n➖➖➖➖➖➖➖\nSELECT METHOD:", "buttons": []},
-    "support": {"text": f"{PEM['msg']} Contact us for any help:", "buttons": []}
+    "support": {"text": f"📢 <b>Join Our Channel:</b>\n<a href=\"https://t.me/skcybersecuritytricks\">SAAD KING TRICKS</a>\n\nFor any help, contact our support team.", "buttons": []}
 }
 
 # ==========================================
