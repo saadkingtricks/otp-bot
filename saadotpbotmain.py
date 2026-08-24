@@ -1295,19 +1295,21 @@ def panel_monitor_thread():
                             
                         parsed_data = []
                         # 🌟 Browser Bypass (403 Forbidden Fix)
-                        headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'}
-                        # 🌟 Zenex Network requires the API key via a "mapikey" header, not a URL param
-                        zenex_target = full_url or url
-                        if "zenexnetwork.com" in zenex_target:
-                            zenex_key = token
-                            if not zenex_key:
-                                try:
-                                    zenex_key = parse_qs(urlparse(zenex_target).query).get('key', [''])[0]
-                                except Exception:
-                                    zenex_key = ""
-                            if zenex_key:
-                                headers['mapikey'] = zenex_key
-                        for try_url in urls_to_try:
+                        headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0 Safari/537.36'}
+# Zenex Network requires the API key via a "mapikey" header, not
+zenex_target = full_url or url
+if "zenexnetwork.com" in zenex_target:
+    zenex_key = token
+    try:
+        zenex_key = parse_qs(urlparse(zenex_target).query).get('data')
+    except Exception:
+        zenex_key = ""
+    if zenex_key:
+        headers['mapikey'] = zenex_key
+# ✅ FIX: Add Authorization header for Green SMS API
+if "143.110.245.86" in str(urls_to_try):
+    headers['Authorization'] = f'Bearer {token}'
+for try_url in urls_to_try:
                             try:
                                 res = requests.get(try_url, headers=headers, timeout=10)
                                 parsed_data = parse_panel_response(res.text, p)
