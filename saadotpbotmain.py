@@ -1294,8 +1294,8 @@ def panel_monitor_thread():
                                 urls_to_try.append(f"{url}{sep}key={token}")
                             
                         parsed_data = []
-                        # 🌟 Browser Bypass (403 Forbidden Fix)
-                        headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0 Safari/537.36'}
+# Browser Bypass (403 Forbidden Fix)
+headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0 Safari/537.36'}
 # Zenex Network requires the API key via a "mapikey" header, not
 zenex_target = full_url or url
 if "zenexnetwork.com" in zenex_target:
@@ -1310,16 +1310,16 @@ if "zenexnetwork.com" in zenex_target:
 if "143.110.245.86" in str(urls_to_try):
     headers['Authorization'] = f'Bearer {token}'
 for try_url in urls_to_try:
-                            try:
-                                res = requests.get(try_url, headers=headers, timeout=10)
-                                parsed_data = parse_panel_response(res.text, p)
-                                if parsed_data:
-                                    if not full_url and try_url != url and token:
-                                        p["api_url"] = try_url.replace(token, "{token}")
-                                        save_db()
-                                    break
-                            except: continue
-                        if not parsed_data: continue
+    try:
+        res = requests.get(try_url, headers=headers, timeout=10)
+        parsed_data = parse_panel_response(res.text, p)
+        if parsed_data:
+            if not full_url and try_url != url and token:
+                p["api_url"] = try_url.replace(token, "{token}")
+                save_db()
+            break
+    except: continue
+if not parsed_data: continue
                     elif p.get("type") == "VoltX Panel":
                         # 🌟 VoltX SMS API Panel Monitoring
                         parsed_data = []
