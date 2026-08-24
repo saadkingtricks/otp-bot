@@ -91,7 +91,7 @@ DEFAULT_CUSTOM_MESSAGES = {
     "search_number": {"text": f"{PEM['num']} <b>Search Number</b>\n\nEnter 3 to 9 digits to search for a number (e.g., 880, 9227373):", "buttons": []},
     "traffic": {"text": f"{PEM['graph']} <b>Traffic Overview</b>\n\n{PEM['ok']} Available Numbers: {{avail}}\n{PEM['rocket']} Assigned Numbers: {{assigned}}", "buttons": []},
     "refer": {"text": f"➖➖➖➖➖➖➖\n« {PEM['gift']} REFER & EARN »\n➖➖➖➖➖➖➖\n{PEM['link']} YOUR LINK:\n<code>{{ref_link}}</code>\n➖➖➖➖➖➖➖\n{PEM['user']} TOTAL REFERS: <b>{{total_ref}}</b>\n➖➖➖➖➖➖➖\n{PEM['money']} PER REFER: <b>{{ref_reward}} ₹</b>\n➖➖➖➖➖➖➖", "buttons": []},
-    "withdrawal": {"text": "➖➖➖➖➖➖➖\n《 😒 WITHDRAWAL 》\n➖➖➖➖➖➖➖\n👋 Total Otp: {total_otp}\n➖➖➖➖➖➖➖\n🫂 Total Reffer :{total_ref}\n➖➖➖➖➖➖➖\n📅 BALANCE: {bal}₹\n➖➖➖➖➖➖➖\n🔐 MINIMUM: {min_w} ₹\n➖➖➖➖➖➖➖\nSELECT METHOD:", "buttons": []},
+    "withdrawal": {"text": "➖➖➖➖➖➖➖\n《 💰 WITHDRAWAL 》\n➖➖➖➖➖➖➖\n📱 Total OTP: {total_otp}\n➖➖➖➖➖➖➖\n👥 Total Refer: {total_ref}\n➖➖➖➖➖➖➖\n💰 BALANCE: {bal} $\n➖➖➖➖➖➖➖\n🔐 MINIMUM: {min_w} $\n➖➖➖➖➖➖➖\n💳 SELECT WALLET:", "buttons": []},
     "support": {"text": f"📢 <b>Join Our Channel:</b>\n<a href=\"https://t.me/skcybersecuritytricks\">SAAD KING TRICKS</a>\n\nFor any help, contact our support team.", "buttons": []}
 }
 
@@ -106,14 +106,14 @@ bot_settings = {
     "fw_groups": [], 
     "otp_link": "https://t.me/DireOTPGroup",
     "withdraw_on": True,
-    "min_withdraw": 30.0,
-    "otp_reward": 0.1,
-    "refer_reward": 0.2,
+    "min_withdraw": 10.0,
+    "otp_reward": 0.001,
+    "refer_reward": 0.001,
     "cooldown": 10,
     "num_req": 3,
     "num_share": 1, 
     "support_link": "https://t.me/skcybersecuritytricks",
-    "w_methods": ["UPI", "Paytm"],
+    "w_methods": ["TRC20 (Tron)", "BEP20 (BSC)"],
     "w_group": "", 
     
     "fj_on": False,
