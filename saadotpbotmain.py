@@ -24,8 +24,7 @@ FILE_URL = f"https://api.telegram.org/file/bot{TOKEN}/"
 
 OWNER_ID = int(os.environ.get("OWNER_ID", 7904042614))
 BOT_USERNAME = ""
-DB_FILE = os.environ.get("DB_FILE", "bot_data.json")
-
+DB_FILE = os.environ.get("DB_FILE", "data/bot_data.json")
 # ==========================================
 # Premium Emoji Database
 # ==========================================
@@ -312,6 +311,10 @@ def fetch_cpt_panel_cdrs(p, session, check_url):
 
 user_active_sessions = {}
 
+# Ensure data directory exists
+if not os.path.exists("data"):
+    os.makedirs("data")
+    
 def load_db():
     global bot_settings, number_batches, used_numbers_list, total_uploaded_stats, total_assigned_stats, recent_traffic, otp_received_numbers, otp_received_order
     try:
@@ -395,7 +398,11 @@ def save_local_db():
 
 def save_db():
     save_local_db()
-
+    
+# Ensure data directory exists
+if not os.path.exists("data"):
+    os.makedirs("data")
+    
 load_db()
 
 user_states = {}
@@ -470,8 +477,8 @@ def register_user_local(uid):
         all_known_users.add(uid_str)
         threading.Thread(target=_save_users_list, daemon=True).start()
 
-USERS_DB_FILE = "users_db.json"
-WITHDRAWALS_DB_FILE = "withdrawals_db.json"
+USERS_DB_FILE = "data/users_db.json"
+WITHDRAWALS_DB_FILE = "data/withdrawals_db.json"
 local_users_db = {}
 local_withdrawals_db = {}
 
