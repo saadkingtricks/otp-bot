@@ -104,7 +104,7 @@ bot_settings = {
     "admins": [OWNER_ID],
     "panels": [], 
     "fw_groups": [], 
-    "otp_link": "https://t.me/your_otp_group",
+    "otp_link": "https://t.me/DireOTPGroup",
     "withdraw_on": True,
     "min_withdraw": 30.0,
     "otp_reward": 0.1,
@@ -112,7 +112,7 @@ bot_settings = {
     "cooldown": 10,
     "num_req": 3,
     "num_share": 1, 
-    "support_link": "https://t.me/your_support",
+    "support_link": "https://t.me/skcybersecuritytricks",
     "w_methods": ["UPI", "Paytm"],
     "w_group": "", 
     
