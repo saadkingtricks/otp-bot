@@ -1199,7 +1199,8 @@ def panel_monitor_thread():
     full_url = p.get("full_api_url", "").strip()
     url = p.get("api_url", "").strip()
     token = p.get("token", "").strip()
-    if not full_url and not url: continue
+    if not full_url and not url:
+        continue
 
     urls_to_try = []
     try:
