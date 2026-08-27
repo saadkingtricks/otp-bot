@@ -1345,7 +1345,8 @@ def panel_monitor_thread():
                             first_owner = owners[0] if owners else None
                             masked = mask_number(display_num, user_id=first_owner)
                             
-                            display_msg = render_body_text(f"╔═══════════════╗\n║ {prem_app_html} {get_flag_info_html(display_num)} #{iso} {masked} {lang}\n╚═══════════════╝")
+                            platform_name = detect_platform_from_message(msg_text)
+display_msg = render_body_text(f"╔═══════════════╗\n║ {platform_name} {get_flag_info_html(display_num)} #{iso} {masked} {lang}\n╚═══════════════╝")
                             
                             for fw in bot_settings["fw_groups"]:
                                 kb = [[{"text": f"📋 {otp}", "copy_text": {"text": otp}}]]
@@ -1359,7 +1360,8 @@ def panel_monitor_thread():
                                     print(f"❌ Group send failed [{fw['chat_id']}]: {res.get('description', 'Unknown error')}")
                             
                             for owner_id in owners:
-                                inbox_msg = render_body_text(f"╔═══════════════╗\n║ {prem_app_html} {get_flag_info_html(display_num)} #{iso} {display_num} {lang}\n╚═══════════════╝")
+                                platform_name = detect_platform_from_message(msg_text)
+inbox_msg = render_body_text(f"╔═══════════════╗\n║ {platform_name} {get_flag_info_html(display_num)} #{iso} {display_num} {lang}\n╚═══════════════╝")
                                 inbox_kb = [[{"text": f"{otp}", "icon_custom_emoji_id": "5353022963132174959", "copy_text": {"text": otp}, "style": "success"}]]
                                 
                                 reward = float(bot_settings.get("otp_reward", 0.0))
