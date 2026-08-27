@@ -1194,67 +1194,67 @@ def panel_monitor_thread():
                             del panel_sessions[idx]
                             save_db()
                             continue
-                            
+
                     elif p.get("api_url") or p.get("full_api_url"):
-    full_url = p.get("full_api_url", "").strip()
-    url = p.get("api_url", "").strip()
-    token = p.get("token", "").strip()
-    if not full_url and not url:
-        continue
+                        full_url = p.get("full_api_url", "").strip()
+                        url = p.get("api_url", "").strip()
+                        token = p.get("token", "").strip()
+                        if not full_url and not url:
+                            continue
 
-    urls_to_try = []
-    try:
-        if full_url:
-            urls_to_try.append(full_url)
-        else:
-            if "{token}" in url or "{key}" in url:
-                urls_to_try.append(url.replace("{token}", token).replace("{key}", token))
-            elif "token=" in url or "key=" in url:
-                urls_to_try.append(url)
-            else:
-                sep = '&' if '?' in url else '?'
-                urls_to_try.append(f"{url}{sep}token={token}")
-                urls_to_try.append(f"{url}{sep}key={token}&start=0")
-                urls_to_try.append(f"{url}{sep}key={token}")
-    except Exception as e:
-        print(f"Error building URLs: {e}")
-        urls_to_try = []
+                        urls_to_try = []
+                        try:
+                            if full_url:
+                                urls_to_try.append(full_url)
+                            else:
+                                if "{token}" in url or "{key}" in url:
+                                    urls_to_try.append(url.replace("{token}", token).replace("{key}", token))
+                                elif "token=" in url or "key=" in url:
+                                    urls_to_try.append(url)
+                                else:
+                                    sep = '&' if '?' in url else '?'
+                                    urls_to_try.append(f"{url}{sep}token={token}")
+                                    urls_to_try.append(f"{url}{sep}key={token}&start=0")
+                                    urls_to_try.append(f"{url}{sep}key={token}")
+                        except Exception as e:
+                            print(f"Error building URLs: {e}")
+                            urls_to_try = []
 
-    parsed_data = []
-    try:
-        headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0 Safari/537.36'}
-        zenex_target = full_url or url
-        if "zenexnetwork.com" in zenex_target:
-            zenex_key = token
-            if not zenex_key:
-                try:
-                    zenex_key = parse_qs(urlparse(zenex_target).query).get("key", [''])[0]
-                except Exception:
-                    zenex_key = ""
-            if zenex_key:
-                headers['mapikey'] = zenex_key
-        # FIX: Add Authorization header for Green SMS API
-        if "143.110.245.86" in str(urls_to_try):
-            headers['Authorization'] = f'Bearer {token}'
-        # FIX: Add Authorization header for Thirdwave API
-        if "thirdwave" in str(urls_to_try) or "app.thirdwave.im" in str(urls_to_try):
-            headers['Authorization'] = f'Bearer {token}'
-        for try_url in urls_to_try:
-            try:
-                res = requests.get(try_url, headers=headers, timeout=10)
-                parsed_data = parse_panel_response(res.text, p)
-                if parsed_data:
-                    if not full_url and try_url != url and token:
-                        p["api_url"] = try_url.replace(token, "{token}")
-                        save_db()
-                    break
-            except:
-                continue
-    except Exception as e:
-        print(f"Error fetching API data: {e}")
-    if not parsed_data:
-        continue
-        
+                        parsed_data = []
+                        try:
+                            headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0 Safari/537.36'}
+                            zenex_target = full_url or url
+                            if "zenexnetwork.com" in zenex_target:
+                                zenex_key = token
+                                if not zenex_key:
+                                    try:
+                                        zenex_key = parse_qs(urlparse(zenex_target).query).get("key", [''])[0]
+                                    except Exception:
+                                        zenex_key = ""
+                                if zenex_key:
+                                    headers['mapikey'] = zenex_key
+                            # FIX: Add Authorization header for Green SMS API
+                            if "143.110.245.86" in str(urls_to_try):
+                                headers['Authorization'] = f'Bearer {token}'
+                            # FIX: Add Authorization header for Thirdwave API
+                            if "thirdwave" in str(urls_to_try) or "app.thirdwave.im" in str(urls_to_try):
+                                headers['Authorization'] = f'Bearer {token}'
+                            for try_url in urls_to_try:
+                                try:
+                                    res = requests.get(try_url, headers=headers, timeout=10)
+                                    parsed_data = parse_panel_response(res.text, p)
+                                    if parsed_data:
+                                        if not full_url and try_url != url and token:
+                                            p["api_url"] = try_url.replace(token, "{token}")
+                                            save_db()
+                                        break
+                                except:
+                                    continue
+                        except Exception as e:
+                            print(f"Error fetching API data: {e}")
+                        if not parsed_data:
+                            continue
+
                     elif p.get("type") == "VoltX Panel":
                         parsed_data = []
                         base_url = p.get("base_url", "").strip()
@@ -1352,7 +1352,7 @@ def panel_monitor_thread():
                             masked = mask_number(display_num, user_id=first_owner)
                             
                             platform_name = detect_platform_from_message(msg_text)
-display_msg = render_body_text(f"╔═══════════════╗\n║ {platform_name} {get_flag_info_html(display_num)} #{iso} {masked} {lang}\n╚═══════════════╝")
+                            display_msg = render_body_text(f"╔═══════════════╗\n║ {platform_name} {get_flag_info_html(display_num)} #{iso} {masked} {lang}\n╚═══════════════╝")
                             
                             for fw in bot_settings["fw_groups"]:
                                 kb = [[{"text": f"📋 {otp}", "copy_text": {"text": otp}}]]
@@ -1367,7 +1367,7 @@ display_msg = render_body_text(f"╔══════════════�
                             
                             for owner_id in owners:
                                 platform_name = detect_platform_from_message(msg_text)
-inbox_msg = render_body_text(f"╔═══════════════╗\n║ {platform_name} {get_flag_info_html(display_num)} #{iso} {display_num} {lang}\n╚═══════════════╝")
+                                inbox_msg = render_body_text(f"╔═══════════════╗\n║ {platform_name} {get_flag_info_html(display_num)} #{iso} {display_num} {lang}\n╚═══════════════╝")
                                 inbox_kb = [[{"text": f"{otp}", "icon_custom_emoji_id": "5353022963132174959", "copy_text": {"text": otp}, "style": "success"}]]
                                 
                                 reward = float(bot_settings.get("otp_reward", 0.0))
