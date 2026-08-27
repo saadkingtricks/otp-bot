@@ -1238,7 +1238,7 @@ def panel_monitor_thread():
                                 headers['Authorization'] = f'Bearer {token}'
                             # FIX: Add Authorization header for Thirdwave API
                             if "thirdwave" in str(urls_to_try) or "app.thirdwave.im" in str(urls_to_try) or "tw_live" in str(urls_to_try):
-                                headers['Authorization'] = f'Bearer {token}'
+                                headers['Authorization'] = f'Bearer {token}' 
                             # ✅ FORCE: Add Authorization header for Thirdwave API
                             headers['Authorization'] = f'Bearer {token}'
                             for try_url in urls_to_try:
