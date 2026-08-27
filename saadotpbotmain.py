@@ -1194,7 +1194,6 @@ def panel_monitor_thread():
                             del panel_sessions[idx]
                             save_db()
                             continue
-
                     elif p.get("api_url") or p.get("full_api_url"):
     full_url = p.get("full_api_url", "").strip()
     url = p.get("api_url", "").strip()
