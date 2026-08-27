@@ -1194,6 +1194,7 @@ def panel_monitor_thread():
                             del panel_sessions[idx]
                             save_db()
                             continue
+                            
                     elif p.get("api_url") or p.get("full_api_url"):
     full_url = p.get("full_api_url", "").strip()
     url = p.get("api_url", "").strip()
@@ -1253,6 +1254,7 @@ def panel_monitor_thread():
         print(f"Error fetching API data: {e}")
     if not parsed_data:
         continue
+        
                     elif p.get("type") == "VoltX Panel":
                         parsed_data = []
                         base_url = p.get("base_url", "").strip()
