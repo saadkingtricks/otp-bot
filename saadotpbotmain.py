@@ -59,7 +59,7 @@ GLOBAL_BODY_EMOJIS = {
     "🕓": "5336983442125001376", "⌛": "4958503072801228000", "💬": "5337302974806922068",
     "🔐": "5337255927735163754", "🍏": "5337132498965010628", "❔": "5336850036145823599",
     "⚠️": "5336944168944047463", "🔥": "5337267511261960341", "💸": "5348469219761626211",
-    "🥚": "5348390922507817684", "👨‍⚖": "5334763399299506604", "🐁": "5348494358205207761",
+    "🥚": "5348390922507817684", "👨⚖": "5334763399299506604", "🐁": "5348494358205207761",
     "🧻": "5348486915026884464", "⚗": "5346311574221000149", "🛴": "5348075478634766440",
     "📊": "5353032893096567467", "🔢": "5352862640592949843", "👤": "5352861489541714456",
     "📁": "5352721946054268944", "🚀": "5352597830089347330", "💎": "5352838545826420397",
@@ -1196,77 +1196,66 @@ def panel_monitor_thread():
                             continue
 
                     elif p.get("api_url") or p.get("full_api_url"):
-    full_url = p.get("full_api_url", "").strip()
-    url = p.get("api_url", "").strip()
-    token = p.get("token", "").strip()
-    if not full_url and not url:
-        continue
+                        full_url = p.get("full_api_url", "").strip()
+                        url = p.get("api_url", "").strip()
+                        token = p.get("token", "").strip()
+                        if not full_url and not url:
+                            continue
 
-    urls_to_try = []
-    try:
-        if full_url:
-            # ✅ FORCE: Add token to URL for Thirdwave
-            if "thirdwave" in full_url or "app.thirdwave.im" in full_url:
-                if "?" in full_url:
-                    urls_to_try.append(f"{full_url}&key={token}")
-                else:
-                    urls_to_try.append(f"{full_url}?key={token}")
-            else:
-                urls_to_try.append(full_url)
-        else:
-            if "{token}" in url or "{key}" in url:
-                urls_to_try.append(url.replace("{token}", token).replace("{key}", token))
-            elif "token=" in url or "key=" in url:
-                urls_to_try.append(url)
-            else:
-                sep = '&' if '?' in url else '?'
-                # ✅ FORCE: Add token to URL for Thirdwave
-                if "thirdwave" in url or "app.thirdwave.im" in url:
-                    urls_to_try.append(f"{url}{sep}key={token}")
-                else:
-                    urls_to_try.append(f"{url}{sep}token={token}")
-                urls_to_try.append(f"{url}{sep}key={token}&start=0")
-                urls_to_try.append(f"{url}{sep}key={token}")
-    except Exception as e:
-        print(f"Error building URLs: {e}")
-        urls_to_try = []
+                        urls_to_try = []
+                        try:
+                            if full_url:
+                                urls_to_try.append(full_url)
+                            else:
+                                if "{token}" in url or "{key}" in url:
+                                    urls_to_try.append(url.replace("{token}", token).replace("{key}", token))
+                                elif "token=" in url or "key=" in url:
+                                    urls_to_try.append(url)
+                                else:
+                                    sep = '&' if '?' in url else '?'
+                                    urls_to_try.append(f"{url}{sep}token={token}")
+                                    urls_to_try.append(f"{url}{sep}key={token}&start=0")
+                                    urls_to_try.append(f"{url}{sep}key={token}")
+                        except Exception as e:
+                            print(f"Error building URLs: {e}")
+                            urls_to_try = []
 
-    parsed_data = []
-    try:
-        headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0 Safari/537.36'}
-        zenex_target = full_url or url
-        if "zenexnetwork.com" in zenex_target:
-            zenex_key = token
-            if not zenex_key:
-                try:
-                    zenex_key = parse_qs(urlparse(zenex_target).query).get("key", [''])[0]
-                except Exception:
-                    zenex_key = ""
-            if zenex_key:
-                headers['mapikey'] = zenex_key
-        # FIX: Add Authorization header for Green SMS API
-        if "143.110.245.86" in str(urls_to_try):
-            headers['Authorization'] = f'Bearer {token}'
-        # FIX: Add Authorization header for Thirdwave API
-        if "thirdwave" in str(urls_to_try) or "app.thirdwave.im" in str(urls_to_try) or "tw_live" in str(urls_to_try):
-            headers['Authorization'] = f'Bearer {token}'
-        # ✅ FORCE: Add Authorization header for Thirdwave API
-        headers['Authorization'] = f'Bearer {token}'
-        for try_url in urls_to_try:
-            try:
-                res = requests.get(try_url, headers=headers, timeout=10)
-                parsed_data = parse_panel_response(res.text, p)
-                if parsed_data:
-                    if not full_url and try_url != url and token:
-                        p["api_url"] = try_url.replace(token, "{token}")
-                        save_db()
-                    break
-            except:
-                continue
-    except Exception as e:
-        print(f"Error fetching API data: {e}")
-    if not parsed_data:
-        continue
+                        parsed_data = []
+                        try:
+                            headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0 Safari/537.36'}
+                            zenex_target = full_url or url
+                            if "zenexnetwork.com" in zenex_target:
+                                zenex_key = token
+                                if not zenex_key:
+                                    try:
+                                        zenex_key = parse_qs(urlparse(zenex_target).query).get("key", [''])[0]
+                                    except Exception:
+                                        zenex_key = ""
+                                if zenex_key:
+                                    headers['mapikey'] = zenex_key
+                            # FIX: Add Authorization header for Green SMS API
+                            if "143.110.245.86" in str(urls_to_try):
+                                headers['Authorization'] = f'Bearer {token}'
+                            # FIX: Add Authorization header for Thirdwave API
+                            if "thirdwave" in str(urls_to_try) or "app.thirdwave.im" in str(urls_to_try) or "tw_live" in str(urls_to_try):
+                                headers['Authorization'] = f'Bearer {token}'
+                            # ✅ FORCE: Add Authorization header for Thirdwave API
+                            headers['Authorization'] = f'Bearer {token}'
+                            for try_url in urls_to_try:
+                                try:
+                                    res = requests.get(try_url, headers=headers, timeout=10)
+                                    parsed_data = parse_panel_response(res.text, p)
+                                    if parsed_data:
+                                        if not full_url and try_url != url and token:
+                                            p["api_url"] = try_url.replace(token, "{token}")
+                                            save_db()
+                                        break
+                                except:
+                                    continue
+                        except Exception as e:
+                            print(f"Error fetching API data: {e}")
+                        if not parsed_data:
+                            continue
 
                     elif p.get("type") == "VoltX Panel":
                         parsed_data = []
