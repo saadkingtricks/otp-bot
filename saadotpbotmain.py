@@ -1222,7 +1222,10 @@ def panel_monitor_thread():
 
                         parsed_data = []
                         try:
-                            headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0 Safari/537.36'}
+                            headers = {
+                                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0 Safari/537.36',
+                                'Authorization': f'Bearer {token}'
+                            }
                             zenex_target = full_url or url
                             if "zenexnetwork.com" in zenex_target:
                                 zenex_key = token
@@ -1236,8 +1239,6 @@ def panel_monitor_thread():
                             # FIX: Add Authorization header for Green SMS API
                             if "143.110.245.86" in str(urls_to_try):
                                 headers['Authorization'] = f'Bearer {token}'
-                            # ✅ FORCE: Add Authorization header for Thirdwave API
-                            headers['Authorization'] = f'Bearer {token}'
                             for try_url in urls_to_try:
                                 try:
                                     res = requests.get(try_url, headers=headers, timeout=10)
