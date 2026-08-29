@@ -886,9 +886,6 @@ def is_user_banned(user_id):
     user_banned_cache[user_id] = {'banned': banned, 'time': time.time()}
     return banned
 
-# =============================================
-# FIX 1: IMPROVED OTP EXTRACTION
-# =============================================
 def extract_otp_code(text):
     """Extract OTP code with better accuracy - skip dates/timestamps"""
     if not text:
@@ -959,9 +956,6 @@ def extract_otp_code(text):
     
     return None
 
-# =============================================
-# FIX 2: IMPROVED PANEL RESPONSE PARSING
-# =============================================
 def parse_panel_response(response_text, p_config=None):
     """Parse panel response with better Thirdwave support"""
     results = []
@@ -1213,9 +1207,6 @@ def attempt_auto_login(p, idx):
         
     return False
 
-# =============================================
-# FIX 3: IMPROVED PANEL MONITOR WITH THIRDWAVE SUPPORT
-# =============================================
 def panel_monitor_thread():
     global processed_otps, recent_traffic, panel_sessions, panel_warmup_done
     first_run = True
@@ -1266,14 +1257,12 @@ def panel_monitor_thread():
                                 if "thirdwave" in url.lower() or "thirdwave.im" in url.lower():
                                     base_url = url.split('/api/')[0] if '/api/' in url else url
                                     base_url = base_url.rstrip('/')
-                                    
                                     urls_to_try = [
                                         f"{base_url}/api/v1/sms?token={token}",
                                         f"{base_url}/api/v1/sms?key={token}",
                                         f"{base_url}/api/v1/sms?api_key={token}",
                                         f"{base_url}/api/v1/messages?token={token}",
                                         f"{base_url}/api/v1/otp?token={token}",
-                                        f"{base_url}/api/v1/sms/received?token={token}",
                                         f"{base_url}/api/v2/sms?token={token}",
                                     ]
                                     print(f"🔍 Thirdwave: Trying {len(urls_to_try)} endpoints")
@@ -1300,19 +1289,24 @@ def panel_monitor_thread():
                             headers = {
                                 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
                                 'Accept': 'application/json',
-                                'Content-Type': 'application/json',
                             }
                             
-                            is_thirdwave = "thirdwave" in str(urls_to_try).lower() or "thirdwave" in str(full_url or url).lower()
+                            zenex_target = full_url or url
                             
-                            if is_thirdwave:
+                            # Thirdwave - Bearer token
+                            if "thirdwave" in str(urls_to_try).lower() or "thirdwave" in zenex_target.lower():
                                 if token:
                                     headers['Authorization'] = f'Bearer {token}'
                                     headers['X-API-Key'] = token
-                                    headers['API-Key'] = token
-                                    print(f"🔑 Thirdwave: Using Bearer token + multiple auth headers")
+                                    print(f"🔑 Thirdwave: Using Bearer token")
                             
-                            zenex_target = full_url or url
+                            # Green SMS - Bearer token
+                            if "143.110.245.86" in str(urls_to_try) or "143.110.245.86" in zenex_target:
+                                if token:
+                                    headers['Authorization'] = f'Bearer {token}'
+                                    print(f"🔑 Green SMS: Using Bearer token")
+                            
+                            # Zenex - mapikey
                             if "zenexnetwork.com" in zenex_target:
                                 zenex_key = token
                                 if not zenex_key:
@@ -1322,7 +1316,7 @@ def panel_monitor_thread():
                                         zenex_key = ""
                                 if zenex_key:
                                     headers['mapikey'] = zenex_key
-                                    print(f"🔑 Zenex: Using mapikey auth")
+                                    print(f"🔑 Zenex: Using mapikey")
                             
                             for try_url in urls_to_try:
                                 try:
@@ -1342,18 +1336,6 @@ def panel_monitor_thread():
                                                 save_db()
                                             print(f"✅ Found {len(parsed_data)} OTPs")
                                             break
-                                    elif status_code == 200 and raw_text.strip().startswith('<'):
-                                        print(f"⚠️ Got HTML instead of JSON. Trying alternative auth...")
-                                        alt_headers = headers.copy()
-                                        alt_headers.pop('Authorization', None)
-                                        alt_headers['token'] = token
-                                        alt_res = requests.get(try_url, headers=alt_headers, timeout=10)
-                                        if alt_res.status_code == 200 and alt_res.text.strip().startswith('{'):
-                                            raw_text = alt_res.text
-                                            parsed_data = parse_panel_response(raw_text, p)
-                                            if parsed_data:
-                                                print(f"✅ Found {len(parsed_data)} OTPs with alternative auth")
-                                                break
                                     else:
                                         print(f"⚠️ Status {status_code}, trying next URL")
                                         continue
@@ -4213,7 +4195,7 @@ def handle_callback(call):
                                 rows = table.find_all('tr')
                                 for r_idx, row in enumerate(rows):
                                     cols = row.find_all(['th', 'td'])
-                                    col_texts = [f"[{c_idx+1}] {c.get_text(separator=' ', strip=True)}" for c_idx, c in enumerate(cols)]
+                                    col_texts = f"[{c_idx+1}] {c.get_text(separator=' ', strip=True)}" for c_idx, c in enumerate(cols)]
                                     full_table_data += f"Row {r_idx+1}: {' | '.join(col_texts)}\n"
                                 full_table_data += "\n" + "="*50 + "\n"
                             
