@@ -1222,11 +1222,29 @@ def panel_monitor_thread():
 
                         parsed_data = []
                         try:
+                            # Base headers for all API requests
                             headers = {
-                                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0 Safari/537.36',
-                                'Authorization': f'Bearer {token}'
+                                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0 Safari/537.36'
                             }
+                            
+                            # =====================================================
+                            # FIXED: Support ALL panel types including Thirdwave
+                            # =====================================================
                             zenex_target = full_url or url
+                            
+                            # 1. Thirdwave SMS Panel - uses Bearer token in Authorization header
+                            if "thirdwave" in zenex_target.lower() or "thirdwave" in str(urls_to_try).lower():
+                                if token:
+                                    headers['Authorization'] = f'Bearer {token}'
+                                    print(f"🔑 Thirdwave: Using Bearer token auth")
+                            
+                            # 2. Green SMS Panel - uses Authorization header with Bearer token
+                            elif "143.110.245.86" in zenex_target or "143.110.245.86" in str(urls_to_try):
+                                if token:
+                                    headers['Authorization'] = f'Bearer {token}'
+                                    print(f"🔑 Green SMS: Using Bearer token auth")
+                            
+                            # 3. Zenex Network - uses mapikey header
                             if "zenexnetwork.com" in zenex_target:
                                 zenex_key = token
                                 if not zenex_key:
@@ -1236,20 +1254,36 @@ def panel_monitor_thread():
                                         zenex_key = ""
                                 if zenex_key:
                                     headers['mapikey'] = zenex_key
-                            # FIX: Add Authorization header for Green SMS API
-                            if "143.110.245.86" in str(urls_to_try):
-                                headers['Authorization'] = f'Bearer {token}'
+                                    print(f"🔑 Zenex: Using mapikey auth")
+                            
+                            # 4. General API panels - try multiple auth methods
                             for try_url in urls_to_try:
                                 try:
+                                    # For each URL, try with headers
                                     res = requests.get(try_url, headers=headers, timeout=10)
+                                    
+                                    # If 401/403, try alternative auth methods
+                                    if res.status_code in [401, 403]:
+                                        # Try with API key in query string
+                                        alt_headers = headers.copy()
+                                        if token:
+                                            alt_url = try_url
+                                            if '?' in alt_url:
+                                                alt_url += f'&key={token}'
+                                            else:
+                                                alt_url += f'?key={token}'
+                                            res = requests.get(alt_url, headers=alt_headers, timeout=10)
+                                    
                                     parsed_data = parse_panel_response(res.text, p)
                                     if parsed_data:
                                         if not full_url and try_url != url and token:
                                             p["api_url"] = try_url.replace(token, "{token}")
                                             save_db()
                                         break
-                                except:
+                                except Exception as e:
+                                    print(f"⚠️ URL attempt failed: {e}")
                                     continue
+                                    
                         except Exception as e:
                             print(f"Error fetching API data: {e}")
                         if not parsed_data:
@@ -1491,7 +1525,7 @@ def system_settings_keyboard():
          {"text": "User Management", "icon_custom_emoji_id": "5193063022226086560", "callback_data": "user_management", "style": "primary"}], 
         [{"text": "Panel MANAGEMENT", "icon_custom_emoji_id": "5336879280578138635", "callback_data": "manage_panels", "style": "danger"},
          {"text": "Subscription", "icon_custom_emoji_id": "5190899075968441286", "callback_data": "dummy_alert", "style": "success"}],
-        [{"text": "Ariyan Control", "icon_custom_emoji_id": "5193100774988617665", "callback_data": "abhi_control", "style": "primary"},
+        [{"text": "Saad King Yt Control", "icon_custom_emoji_id": "5193100774988617665", "callback_data": "abhi_control", "style": "primary"},
          {"text": "Premium Emoji", "icon_custom_emoji_id": "5352552689983067014", "callback_data": "manage_emojis", "style": "success"}],
         [{"text": "Menu Design", "icon_custom_emoji_id": "5190751148704833975", "callback_data": "menu_design_list", "style": "primary"},
          {"text": "Test", "icon_custom_emoji_id": "5190781475468915802", "callback_data": "test_message_flow", "style": "primary"}], 
@@ -2548,10 +2582,10 @@ def handle_message(msg):
                 else: bot_settings[key] = text
                 save_db()
                 delete_message(chat_id, msg["message_id"])
-                edit_message(chat_id, msg_id, render_body_text("🕹 <b>ARIYAN CONTROL PANEL</b>"), reply_markup=abhi_control_keyboard())
+                edit_message(chat_id, msg_id, render_body_text("🕹 <b>SAAD KING YT CONTROL PANEL</b>"), reply_markup=abhi_control_keyboard())
             except:
                 delete_message(chat_id, msg["message_id"])
-                edit_message(chat_id, msg_id, render_body_text("🕹 <b>ARIYAN CONTROL PANEL</b>\n\n❌ Invalid value!"), reply_markup=abhi_control_keyboard())
+                edit_message(chat_id, msg_id, render_body_text("🕹 <b>SAAD KING YT CONTROL PANEL</b>\n\n❌ Invalid value!"), reply_markup=abhi_control_keyboard())
             del user_states[chat_id]
             del temp_data[chat_id]
             return
@@ -3060,7 +3094,7 @@ def handle_callback(call):
     elif data == "cancel_abhi_edit":
         if chat_id in user_states: del user_states[chat_id]
         if chat_id in temp_data: del temp_data[chat_id]
-        edit_message(chat_id, msg_id, render_body_text("🕹 <b>ARIYAN CONTROL PANEL</b>"), reply_markup=abhi_control_keyboard())
+        edit_message(chat_id, msg_id, render_body_text("🕹 <b>SAAD KING YT CONTROL PANEL</b>"), reply_markup=abhi_control_keyboard())
         
     elif data == "dummy_alert":
         answer_callback(call["id"], "This feature will be added later!", show_alert=True)
@@ -3942,7 +3976,7 @@ def handle_callback(call):
                         otps = d.get("data", {}).get("otps", [])
                         if isinstance(otps, list) and otps:
                             sample = otps[0]
-                            txt = f"✅ <b>VoltX Connection OK!</b>\n\n🔢 OTPs in queue: <b>{len(otps)}</b>\n\n<b>Sample Entry:</b>\n📱 Number: <code>{sample.get('number','?')}</code>\n📝 Message: <code>{html.escape(str(sample.get('message',''))[:200])}</code>\n🔐 OTP: <code>{extract_otp_code(str(sample.get('message','')))}</code>"
+                            txt = f"✅ <b>VoltX Connection OK!</b>\n\n🔢 OTPs in queue: <b>{len(otps)}</b>\n\n<b>Sample Entry:</b>\n📱 Number: <code>{sample.get('number','?')}</code>\n📝 Message: <code>{html.escape(str(sample.get('message','')))[:200]}</code>\n🔐 OTP: <code>{extract_otp_code(str(sample.get('message','')))}</code>"
                             send_message(chat_id, render_body_text(txt))
                         else:
                             send_message(chat_id, render_body_text(f"✅ <b>VoltX Connected!</b> No OTPs in queue yet.\n\n<code>{html.escape(str(res_vx.text)[:300])}</code>"))
@@ -4010,8 +4044,24 @@ def handle_callback(call):
                 parsed = []
                 raw_text = ""
                 try:
+                    # Base headers for all API requests
                     headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'}
+                    
                     zenex_target = full_url or url
+                    
+                    # Check for Thirdwave SMS Panel
+                    if "thirdwave" in zenex_target.lower() or "thirdwave" in str(urls_to_try).lower():
+                        if token:
+                            headers['Authorization'] = f'Bearer {token}'
+                            print(f"🔑 Thirdwave: Using Bearer token auth")
+                    
+                    # Check for Green SMS Panel
+                    if "143.110.245.86" in zenex_target or "143.110.245.86" in str(urls_to_try):
+                        if token:
+                            headers['Authorization'] = f'Bearer {token}'
+                            print(f"🔑 Green SMS: Using Bearer token auth")
+                    
+                    # Zenex Network
                     if "zenexnetwork.com" in zenex_target:
                         zenex_key = token
                         if not zenex_key:
@@ -4021,8 +4071,8 @@ def handle_callback(call):
                                 zenex_key = ""
                         if zenex_key:
                             headers['mapikey'] = zenex_key
-                    if "143.110.245.86" in str(urls_to_try):
-                        headers['Authorization'] = f'Bearer {token}'
+                            print(f"🔑 Zenex: Using mapikey auth")
+                    
                     for try_url in urls_to_try:
                         try:
                             res = requests.get(try_url, headers=headers, timeout=10)
@@ -4091,12 +4141,12 @@ def handle_callback(call):
 
     elif data == "abhi_control":
         if chat_id in user_states: del user_states[chat_id]
-        edit_message(chat_id, msg_id, render_body_text("🕹 <b>ARIYAN CONTROL PANEL</b>"), reply_markup=abhi_control_keyboard())
+        edit_message(chat_id, msg_id, render_body_text("🕹 <b>SAAD KING YT CONTROL PANEL</b>"), reply_markup=abhi_control_keyboard())
 
     elif data == "abhi_toggle_w":
         bot_settings["withdraw_on"] = not bot_settings["withdraw_on"]
         save_db()
-        edit_message(chat_id, msg_id, render_body_text("🕹 <b>ARIYAN CONTROL PANEL</b>"), reply_markup=abhi_control_keyboard())
+        edit_message(chat_id, msg_id, render_body_text("🕹 <b>SAAD KING YT CONTROL PANEL</b>"), reply_markup=abhi_control_keyboard())
 
     elif data == "manage_w_methods":
         edit_message(chat_id, msg_id, render_body_text("💳 <b>WITHDRAWAL METHODS</b>\n\nManage your withdrawal methods below:"), reply_markup=w_methods_keyboard())
