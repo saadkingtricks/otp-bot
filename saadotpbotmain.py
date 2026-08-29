@@ -886,32 +886,84 @@ def is_user_banned(user_id):
     user_banned_cache[user_id] = {'banned': banned, 'time': time.time()}
     return banned
 
+# =============================================
+# FIX 1: IMPROVED OTP EXTRACTION
+# =============================================
 def extract_otp_code(text):
-    clean_text = re.sub(r'[\u200B-\u200D\uFEFF]', '', str(text))
-
-    multi_part = re.search(r'(\d{3}[-\s]+\d{3})|(\d{2}[-\s]+\d{2}[-\s]+\d{2})', clean_text)
-    if multi_part:
-        return multi_part.group(0).replace(" ", "")
-
-    otp_keywords = ['code', 'is', 'otp', 'pin', 'verification', 'auth', 'رمز', 'your code']
-    keywords_pattern = '|'.join(otp_keywords)
-    keyword_match = re.search(rf'(?:{keywords_pattern})\s*(?:is|:|-|=)?\s*([a-z0-9]{{4,10}})', clean_text, re.I)
-    if keyword_match and keyword_match.group(1).isdigit():
-        return keyword_match.group(1)
+    """Extract OTP code with better accuracy - skip dates/timestamps"""
+    if not text:
+        return None
         
-    keyword_match_rev = re.search(rf'([a-z0-9]{{4,10}})\s*(?:is your|is the|code)', clean_text, re.I)
-    if keyword_match_rev and keyword_match_rev.group(1).isdigit():
-        return keyword_match_rev.group(1)
-
-    g_match = re.search(r'G-(\d{6})', clean_text, re.IGNORECASE)
-    if g_match: return g_match.group(1)
-
-    digit_matches = re.findall(r'(?<!\d)\d{4,8}(?!\d)', clean_text)
-    if digit_matches: return digit_matches[0]
-
+    clean_text = re.sub(r'[\u200B-\u200D\uFEFF]', '', str(text))
+    
+    # Skip date/time formats
+    date_patterns = [
+        r'\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z',
+        r'\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2}',
+        r'\d{2}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}',
+        r'\d{4}/\d{2}/\d{2}\s+\d{2}:\d{2}:\d{2}',
+        r'\d{2}/\d{2}/\d{4}\s+\d{2}:\d{2}',
+    ]
+    
+    for pattern in date_patterns:
+        if re.search(pattern, clean_text):
+            if len(clean_text) < 30 and re.match(r'^[\d\-:TZ\/\s]+$', clean_text):
+                return None
+    
+    # Priority 1: OTP patterns
+    otp_patterns = [
+        r'(?:code|otp|pin|verification|auth|your code|is|:)\s*(?:is|:|-|=)?\s*([0-9]{4,8})',
+        r'G-([0-9]{6})',
+        r'([0-9]{4,8})\s*(?:is your|is the|code|otp|pin)',
+        r'(?:verification|verify|confirm)\s*(?:code|pin|otp)?\s*(?:is|:|-|=)?\s*([0-9]{4,8})',
+        r'(?<!\d)([0-9]{6})(?!\d)',
+        r'(?<!\d)([0-9]{5})(?!\d)',
+        r'(?<!\d)([0-9]{4})(?!\d)',
+        r'(?<!\d)([0-9]{7})(?!\d)',
+        r'(?<!\d)([0-9]{8})(?!\d)',
+    ]
+    
+    for pattern in otp_patterns:
+        match = re.search(pattern, clean_text, re.IGNORECASE)
+        if match:
+            otp = match.group(1).replace('-', '').replace(' ', '')
+            
+            # Skip if it looks like a date
+            if re.match(r'^\d{2}-\d{2}-\d{2}$', otp):
+                continue
+            if re.match(r'^\d{4}-\d{2}-\d{2}$', otp):
+                continue
+            if re.match(r'^\d{2}-\d{2}$', otp) and len(otp) < 5:
+                continue
+                
+            if len(otp) >= 4 and len(otp) <= 8 and otp not in ['000000', '0000']:
+                return otp
+    
+    # Priority 2: Multi-part OTP
+    multi_part = re.search(r'(\d{3}[\s-]+\d{3})|(\d{2}[\s-]+\d{2}[\s-]+\d{2})', clean_text)
+    if multi_part:
+        otp = multi_part.group(0).replace(" ", "").replace("-", "")
+        if len(otp) >= 4 and len(otp) <= 8:
+            return otp
+    
+    # Priority 3: Any 4-8 digit number (last resort)
+    digit_matches = re.findall(r'(?<!\d)(\d{4,8})(?!\d)', clean_text)
+    
+    for match in digit_matches:
+        if re.match(r'^\d{2}\d{2}\d{2}$', match) and match[:2] in ['19', '20']:
+            continue
+        if re.match(r'^\d{4}\d{2}\d{2}$', match) and match[:4] in ['2024', '2025', '2026']:
+            continue
+        if match not in ['000000', '0000']:
+            return match
+    
     return None
 
+# =============================================
+# FIX 2: IMPROVED PANEL RESPONSE PARSING
+# =============================================
 def parse_panel_response(response_text, p_config=None):
+    """Parse panel response with better Thirdwave support"""
     results = []
     p_type = p_config.get("type", "API Panel") if p_config else "API Panel"
     
@@ -920,126 +972,124 @@ def parse_panel_response(response_text, p_config=None):
     n_idx = int(p_config.get("num_col_idx", 1)) - 1 if p_config and p_config.get("num_col_idx") else 1
     m_idx = int(p_config.get("msg_col_idx", 2)) - 1 if p_config and p_config.get("msg_col_idx") else 2
 
-    if p_type == "Auto Captcha Panel":
-        try:
-            soup = BeautifulSoup(response_text, 'html.parser')
-            tables = soup.find_all('table')
-            
-            for table in tables:
-                rows = table.find_all('tr')
-                if not rows: continue
-                
-                final_n_idx = n_idx
-                final_m_idx = m_idx
-                
-                header_cells = rows[0].find_all(['th', 'td'])
-                for i, cell in enumerate(header_cells):
-                    c_text = cell.get_text(strip=True).lower()
-                    if n_col_name in c_text: final_n_idx = i
-                    if m_col_name in c_text: final_m_idx = i
-
-                for row in rows:
-                    cols = row.find_all(['td', 'th'])
-                    
-                    if all(c.name == 'th' for c in cols): continue
-                    
-                    if len(cols) > max(final_n_idx, final_m_idx):
-                        num_text = cols[final_n_idx].get_text(separator=" ", strip=True)
-                        msg_text = cols[final_m_idx].get_text(separator=" ", strip=True)
-                        
-                        clean_num = re.sub(r'\D', '', num_text)
-                        
-                        if clean_num and 5 <= len(clean_num) <= 18:
-                            otp = extract_otp_code(msg_text)
-                            if otp and len(msg_text) > 4:
-                                results.append({"number": clean_num, "message": msg_text, "otp": otp})
-        except Exception as e:
-            print(f"⚠️ Panel HTML parse error: {e}")
-    else:
-        try:
-            data = json.loads(response_text)
-            temp_results = []
-            
-            def process_item(item):
-                pot_nums_list = []
-                pot_msg = None
-                values = []
-                
-                if isinstance(item, dict):
-                    lower_keys = {str(k).lower(): v for k, v in item.items()}
-                    for k in ["number", "num", "phone", "msisdn", "sender"]:
-                        if k in lower_keys:
-                            clean_val = re.sub(r'\D', '', str(lower_keys[k]))
-                            if 5 <= len(clean_val) <= 18:
-                                if clean_val not in pot_nums_list: pot_nums_list.append(clean_val)
-                    for k in ["message", "msg", "sms", "content", "text"]:
-                        if k in lower_keys:
-                            val = str(lower_keys[k])
-                            if len(val) > 4:
-                                pot_msg = val
-                                break
-                    values = list(item.values())
-                elif isinstance(item, list):
-                    values = item
-
-                for v in values:
-                    if isinstance(v, (dict, list)) or v is None: continue
-                    v_str = str(v).strip()
-                    
-                    clean_v = re.sub(r'\D', '', v_str)
-                    if 7 <= len(clean_v) <= 18 and not re.search(r'[a-zA-Z]', v_str):
-                        if not re.search(r'\d{4}[-/]\d{2}[-/]\d{2}', v_str) and not re.search(r'\d{2}:\d{2}:\d{2}', v_str) and "." not in v_str:
-                            if clean_v not in pot_nums_list:
-                                pot_nums_list.append(clean_v)
-                    
-                    if len(v_str) > 4 and not v_str.isdigit():
-                        if extract_otp_code(v_str):
-                            if pot_msg is None or len(v_str) > len(pot_msg):
-                                pot_msg = v_str
-                                
-                pot_num = None
-                if pot_nums_list:
-                    matched_user_num = None
-                    for n in pot_nums_list:
-                        if n in nexa_assigned_numbers or any(n in str(key) for key in nexa_assigned_numbers.keys()):
-                            matched_user_num = n
-                            break
-                    
-                    if matched_user_num:
-                        pot_num = matched_user_num
-                    elif len(pot_nums_list) >= 2:
-                        pot_num = pot_nums_list[1]
-                    else:
-                        pot_num = pot_nums_list[0]
-                            
-                if pot_num and pot_msg:
-                    otp = extract_otp_code(pot_msg)
-                    if otp:
-                        temp_results.append({"number": pot_num, "message": pot_msg, "otp": otp})
-                        
-            def traverse_json(node):
-                if isinstance(node, list):
-                    if len(node) > 0 and not isinstance(node[0], (dict, list)):
-                        process_item(node)
-                    for child in node:
-                        if isinstance(child, (dict, list)):
-                            traverse_json(child)
-                elif isinstance(node, dict):
-                    process_item(node)
-                    for val in node.values():
-                        if isinstance(val, (dict, list)):
-                            traverse_json(val)
-
-            traverse_json(data)
-            
-            seen = set()
-            for r in temp_results:
-                uid = f"{r['number']}_{r['otp']}"
-                if uid not in seen:
-                    seen.add(uid)
-                    results.append(r)
-        except: pass
+    # First try JSON parsing
+    try:
+        data = json.loads(response_text)
+        temp_results = []
         
+        def extract_data(item):
+            number = None
+            message = None
+            
+            if isinstance(item, dict):
+                # Try to find number
+                for key in ['number', 'phone', 'msisdn', 'sender', 'num', 'from', 'to']:
+                    if key in item:
+                        val = str(item[key]).strip()
+                        clean_num = re.sub(r'\D', '', val)
+                        if 5 <= len(clean_num) <= 18:
+                            number = clean_num
+                            break
+                
+                # Try to find message
+                for key in ['message', 'msg', 'sms', 'content', 'text', 'body', 'otp_message']:
+                    if key in item:
+                        val = str(item[key]).strip()
+                        if len(val) > 4:
+                            message = val
+                            break
+                
+                # If no message found, check all values
+                if not message:
+                    for key, val in item.items():
+                        if key not in ['number', 'phone', 'msisdn', 'sender', 'num', 'from', 'to', 'id', 'timestamp', 'time']:
+                            val_str = str(val).strip()
+                            if len(val_str) > 4 and val_str != 'null' and val_str != 'None':
+                                test_otp = extract_otp_code(val_str)
+                                if test_otp:
+                                    message = val_str
+                                    break
+            
+            elif isinstance(item, list):
+                for val in item:
+                    if isinstance(val, str):
+                        if re.sub(r'\D', '', val) and 5 <= len(re.sub(r'\D', '', val)) <= 18:
+                            if not number:
+                                number = re.sub(r'\D', '', val)
+                        elif len(val) > 4:
+                            if extract_otp_code(val):
+                                message = val
+                                break
+            
+            if number and message:
+                otp = extract_otp_code(message)
+                if otp and len(otp) >= 4:
+                    return {"number": number, "message": message, "otp": otp}
+            return None
+        
+        def traverse(node):
+            if isinstance(node, dict):
+                result = extract_data(node)
+                if result:
+                    temp_results.append(result)
+                for val in node.values():
+                    if isinstance(val, (dict, list)):
+                        traverse(val)
+            elif isinstance(node, list):
+                for item in node:
+                    if isinstance(item, (dict, list)):
+                        traverse(item)
+                    elif isinstance(item, str):
+                        result = extract_data([item])
+                        if result:
+                            temp_results.append(result)
+        
+        traverse(data)
+        
+        seen = set()
+        for r in temp_results:
+            uid = f"{r['number']}_{r['otp']}"
+            if uid not in seen:
+                seen.add(uid)
+                results.append(r)
+                
+    except json.JSONDecodeError:
+        # HTML fallback parsing
+        if p_type == "Auto Captcha Panel":
+            try:
+                soup = BeautifulSoup(response_text, 'html.parser')
+                tables = soup.find_all('table')
+                
+                for table in tables:
+                    rows = table.find_all('tr')
+                    if not rows: continue
+                    
+                    final_n_idx = n_idx
+                    final_m_idx = m_idx
+                    
+                    header_cells = rows[0].find_all(['th', 'td'])
+                    for i, cell in enumerate(header_cells):
+                        c_text = cell.get_text(strip=True).lower()
+                        if n_col_name in c_text: final_n_idx = i
+                        if m_col_name in c_text: final_m_idx = i
+
+                    for row in rows:
+                        cols = row.find_all(['td', 'th'])
+                        if all(c.name == 'th' for c in cols): continue
+                        
+                        if len(cols) > max(final_n_idx, final_m_idx):
+                            num_text = cols[final_n_idx].get_text(separator=" ", strip=True)
+                            msg_text = cols[final_m_idx].get_text(separator=" ", strip=True)
+                            
+                            clean_num = re.sub(r'\D', '', num_text)
+                            
+                            if clean_num and 5 <= len(clean_num) <= 18:
+                                otp = extract_otp_code(msg_text)
+                                if otp and len(msg_text) > 4:
+                                    results.append({"number": clean_num, "message": msg_text, "otp": otp})
+            except Exception as e:
+                print(f"⚠️ HTML parse error: {e}")
+    
     return results
 
 def attempt_auto_login(p, idx):
@@ -1163,6 +1213,9 @@ def attempt_auto_login(p, idx):
         
     return False
 
+# =============================================
+# FIX 3: IMPROVED PANEL MONITOR WITH THIRDWAVE SUPPORT
+# =============================================
 def panel_monitor_thread():
     global processed_otps, recent_traffic, panel_sessions, panel_warmup_done
     first_run = True
@@ -1207,44 +1260,59 @@ def panel_monitor_thread():
                             if full_url:
                                 urls_to_try.append(full_url)
                             else:
-                                if "{token}" in url or "{key}" in url:
-                                    urls_to_try.append(url.replace("{token}", token).replace("{key}", token))
-                                elif "token=" in url or "key=" in url:
-                                    urls_to_try.append(url)
+                                # =============================================
+                                # FIX: Better URL building for Thirdwave
+                                # =============================================
+                                if "thirdwave" in url.lower() or "thirdwave.im" in url.lower():
+                                    base_url = url.split('/api/')[0] if '/api/' in url else url
+                                    base_url = base_url.rstrip('/')
+                                    
+                                    urls_to_try = [
+                                        f"{base_url}/api/v1/sms?token={token}",
+                                        f"{base_url}/api/v1/sms?key={token}",
+                                        f"{base_url}/api/v1/sms?api_key={token}",
+                                        f"{base_url}/api/v1/messages?token={token}",
+                                        f"{base_url}/api/v1/otp?token={token}",
+                                        f"{base_url}/api/v1/sms/received?token={token}",
+                                        f"{base_url}/api/v2/sms?token={token}",
+                                    ]
+                                    print(f"🔍 Thirdwave: Trying {len(urls_to_try)} endpoints")
                                 else:
-                                    sep = '&' if '?' in url else '?'
-                                    urls_to_try.append(f"{url}{sep}token={token}")
-                                    urls_to_try.append(f"{url}{sep}key={token}&start=0")
-                                    urls_to_try.append(f"{url}{sep}key={token}")
+                                    if "{token}" in url or "{key}" in url:
+                                        urls_to_try.append(url.replace("{token}", token).replace("{key}", token))
+                                    elif "token=" in url or "key=" in url:
+                                        urls_to_try.append(url)
+                                    else:
+                                        sep = '&' if '?' in url else '?'
+                                        urls_to_try.append(f"{url}{sep}token={token}")
+                                        urls_to_try.append(f"{url}{sep}key={token}&start=0")
+                                        urls_to_try.append(f"{url}{sep}key={token}")
                         except Exception as e:
                             print(f"Error building URLs: {e}")
                             urls_to_try = []
 
                         parsed_data = []
+                        raw_text = ""
                         try:
-                            # Base headers for all API requests
+                            # =============================================
+                            # FIX: Better headers with multiple auth methods
+                            # =============================================
                             headers = {
-                                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0 Safari/537.36'
+                                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+                                'Accept': 'application/json',
+                                'Content-Type': 'application/json',
                             }
                             
-                            # =====================================================
-                            # FIXED: Support ALL panel types including Thirdwave
-                            # =====================================================
+                            is_thirdwave = "thirdwave" in str(urls_to_try).lower() or "thirdwave" in str(full_url or url).lower()
+                            
+                            if is_thirdwave:
+                                if token:
+                                    headers['Authorization'] = f'Bearer {token}'
+                                    headers['X-API-Key'] = token
+                                    headers['API-Key'] = token
+                                    print(f"🔑 Thirdwave: Using Bearer token + multiple auth headers")
+                            
                             zenex_target = full_url or url
-                            
-                            # 1. Thirdwave SMS Panel - uses Bearer token in Authorization header
-                            if "thirdwave" in zenex_target.lower() or "thirdwave" in str(urls_to_try).lower():
-                                if token:
-                                    headers['Authorization'] = f'Bearer {token}'
-                                    print(f"🔑 Thirdwave: Using Bearer token auth")
-                            
-                            # 2. Green SMS Panel - uses Authorization header with Bearer token
-                            elif "143.110.245.86" in zenex_target or "143.110.245.86" in str(urls_to_try):
-                                if token:
-                                    headers['Authorization'] = f'Bearer {token}'
-                                    print(f"🔑 Green SMS: Using Bearer token auth")
-                            
-                            # 3. Zenex Network - uses mapikey header
                             if "zenexnetwork.com" in zenex_target:
                                 zenex_key = token
                                 if not zenex_key:
@@ -1256,36 +1324,47 @@ def panel_monitor_thread():
                                     headers['mapikey'] = zenex_key
                                     print(f"🔑 Zenex: Using mapikey auth")
                             
-                            # 4. General API panels - try multiple auth methods
                             for try_url in urls_to_try:
                                 try:
-                                    # For each URL, try with headers
+                                    print(f"🔄 Trying: {try_url}")
                                     res = requests.get(try_url, headers=headers, timeout=10)
+                                    raw_text = res.text
+                                    status_code = res.status_code
+                                    content_type = res.headers.get('content-type', '')
                                     
-                                    # If 401/403, try alternative auth methods
-                                    if res.status_code in [401, 403]:
-                                        # Try with API key in query string
+                                    print(f"📊 Status: {status_code}, Content-Type: {content_type}")
+                                    
+                                    if status_code == 200 and (content_type.startswith('application/json') or raw_text.strip().startswith('{')):
+                                        parsed_data = parse_panel_response(raw_text, p)
+                                        if parsed_data:
+                                            if not full_url and try_url != url and token:
+                                                p["api_url"] = try_url.replace(token, "{token}")
+                                                save_db()
+                                            print(f"✅ Found {len(parsed_data)} OTPs")
+                                            break
+                                    elif status_code == 200 and raw_text.strip().startswith('<'):
+                                        print(f"⚠️ Got HTML instead of JSON. Trying alternative auth...")
                                         alt_headers = headers.copy()
-                                        if token:
-                                            alt_url = try_url
-                                            if '?' in alt_url:
-                                                alt_url += f'&key={token}'
-                                            else:
-                                                alt_url += f'?key={token}'
-                                            res = requests.get(alt_url, headers=alt_headers, timeout=10)
-                                    
-                                    parsed_data = parse_panel_response(res.text, p)
-                                    if parsed_data:
-                                        if not full_url and try_url != url and token:
-                                            p["api_url"] = try_url.replace(token, "{token}")
-                                            save_db()
-                                        break
+                                        alt_headers.pop('Authorization', None)
+                                        alt_headers['token'] = token
+                                        alt_res = requests.get(try_url, headers=alt_headers, timeout=10)
+                                        if alt_res.status_code == 200 and alt_res.text.strip().startswith('{'):
+                                            raw_text = alt_res.text
+                                            parsed_data = parse_panel_response(raw_text, p)
+                                            if parsed_data:
+                                                print(f"✅ Found {len(parsed_data)} OTPs with alternative auth")
+                                                break
+                                    else:
+                                        print(f"⚠️ Status {status_code}, trying next URL")
+                                        continue
+                                        
                                 except Exception as e:
-                                    print(f"⚠️ URL attempt failed: {e}")
+                                    print(f"❌ URL failed: {str(e)[:50]}")
                                     continue
                                     
                         except Exception as e:
                             print(f"Error fetching API data: {e}")
+                        
                         if not parsed_data:
                             continue
 
@@ -4028,15 +4107,26 @@ def handle_callback(call):
                     if full_url:
                         urls_to_try.append(full_url)
                     else:
-                        if "{token}" in url or "{key}" in url:
-                            urls_to_try.append(url.replace("{token}", token).replace("{key}", token))
-                        elif "token=" in url or "key=" in url:
-                            urls_to_try.append(url)
+                        if "thirdwave" in url.lower() or "thirdwave.im" in url.lower():
+                            base_url = url.split('/api/')[0] if '/api/' in url else url
+                            base_url = base_url.rstrip('/')
+                            urls_to_try = [
+                                f"{base_url}/api/v1/sms?token={token}",
+                                f"{base_url}/api/v1/sms?key={token}",
+                                f"{base_url}/api/v1/sms?api_key={token}",
+                                f"{base_url}/api/v1/messages?token={token}",
+                                f"{base_url}/api/v1/otp?token={token}",
+                            ]
                         else:
-                            sep = '&' if '?' in url else '?'
-                            urls_to_try.append(f"{url}{sep}token={token}")
-                            urls_to_try.append(f"{url}{sep}key={token}&start=0")
-                            urls_to_try.append(f"{url}{sep}key={token}")
+                            if "{token}" in url or "{key}" in url:
+                                urls_to_try.append(url.replace("{token}", token).replace("{key}", token))
+                            elif "token=" in url or "key=" in url:
+                                urls_to_try.append(url)
+                            else:
+                                sep = '&' if '?' in url else '?'
+                                urls_to_try.append(f"{url}{sep}token={token}")
+                                urls_to_try.append(f"{url}{sep}key={token}&start=0")
+                                urls_to_try.append(f"{url}{sep}key={token}")
                 except Exception as e:
                     print(f"Error building URLs: {e}")
                     urls_to_try = []
@@ -4044,24 +4134,19 @@ def handle_callback(call):
                 parsed = []
                 raw_text = ""
                 try:
-                    # Base headers for all API requests
-                    headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'}
+                    headers = {
+                        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+                        'Accept': 'application/json',
+                    }
                     
                     zenex_target = full_url or url
                     
-                    # Check for Thirdwave SMS Panel
                     if "thirdwave" in zenex_target.lower() or "thirdwave" in str(urls_to_try).lower():
                         if token:
                             headers['Authorization'] = f'Bearer {token}'
-                            print(f"🔑 Thirdwave: Using Bearer token auth")
+                            headers['X-API-Key'] = token
+                            print(f"🔑 Thirdwave: Testing with Bearer token")
                     
-                    # Check for Green SMS Panel
-                    if "143.110.245.86" in zenex_target or "143.110.245.86" in str(urls_to_try):
-                        if token:
-                            headers['Authorization'] = f'Bearer {token}'
-                            print(f"🔑 Green SMS: Using Bearer token auth")
-                    
-                    # Zenex Network
                     if "zenexnetwork.com" in zenex_target:
                         zenex_key = token
                         if not zenex_key:
@@ -4071,20 +4156,27 @@ def handle_callback(call):
                                 zenex_key = ""
                         if zenex_key:
                             headers['mapikey'] = zenex_key
-                            print(f"🔑 Zenex: Using mapikey auth")
                     
                     for try_url in urls_to_try:
                         try:
+                            print(f"🔄 Testing: {try_url}")
                             res = requests.get(try_url, headers=headers, timeout=10)
                             raw_text = res.text
-                            parsed = parse_panel_response(raw_text, p)
-                            if parsed:
-                                if not full_url and try_url != url and token:
-                                    p["api_url"] = try_url.replace(token, "{token}")
-                                    save_db()
-                                break
-                        except:
+                            content_type = res.headers.get('content-type', '')
+                            
+                            if res.status_code == 200 and (content_type.startswith('application/json') or raw_text.strip().startswith('{')):
+                                parsed = parse_panel_response(raw_text, p)
+                                if parsed:
+                                    if not full_url and try_url != url and token:
+                                        p["api_url"] = try_url.replace(token, "{token}")
+                                        save_db()
+                                    break
+                            else:
+                                print(f"⚠️ Status {res.status_code}, Content-Type: {content_type}")
+                        except Exception as e:
+                            print(f"❌ URL error: {e}")
                             continue
+                            
                 except Exception as e:
                     print(f"Error fetching API data: {e}")
                  
