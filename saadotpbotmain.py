@@ -4195,7 +4195,7 @@ def handle_callback(call):
                                 rows = table.find_all('tr')
                                 for r_idx, row in enumerate(rows):
                                     cols = row.find_all(['th', 'td'])
-                                    col_texts = f"[{c_idx+1}] {c.get_text(separator=' ', strip=True)}" for c_idx, c in enumerate(cols)]
+                                    col_texts = [f"[{c_idx+1}] {c.get_text(separator=' ', strip=True)}" for c_idx, c in enumerate(cols)]
                                     full_table_data += f"Row {r_idx+1}: {' | '.join(col_texts)}\n"
                                 full_table_data += "\n" + "="*50 + "\n"
                             
