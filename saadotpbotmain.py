@@ -886,6 +886,9 @@ def is_user_banned(user_id):
     user_banned_cache[user_id] = {'banned': banned, 'time': time.time()}
     return banned
 
+# =============================================
+# FIX: IMPROVED OTP EXTRACTION
+# =============================================
 def extract_otp_code(text):
     """Extract OTP code with better accuracy - skip dates/timestamps"""
     if not text:
@@ -956,6 +959,9 @@ def extract_otp_code(text):
     
     return None
 
+# =============================================
+# FIX: IMPROVED PANEL RESPONSE PARSING
+# =============================================
 def parse_panel_response(response_text, p_config=None):
     """Parse panel response with better Thirdwave support"""
     results = []
@@ -1252,20 +1258,21 @@ def panel_monitor_thread():
                                 urls_to_try.append(full_url)
                             else:
                                 # =============================================
-                                # FIX: Better URL building for Thirdwave
+                                # FIX: Thirdwave uses /traffic endpoint for SMS data
                                 # =============================================
-                                if "thirdwave" in url.lower() or "thirdwave.im" in url.lower():
+                                if "thirdwave" in url.lower() or "thirdwave.im" in url.lower() or "app.thirdwave.im" in url:
                                     base_url = url.split('/api/')[0] if '/api/' in url else url
                                     base_url = base_url.rstrip('/')
+                                    # As per manager: /traffic contains all data including SMS
                                     urls_to_try = [
-                                        f"{base_url}/api/v1/sms?token={token}",
-                                        f"{base_url}/api/v1/sms?key={token}",
-                                        f"{base_url}/api/v1/sms?api_key={token}",
-                                        f"{base_url}/api/v1/messages?token={token}",
-                                        f"{base_url}/api/v1/otp?token={token}",
-                                        f"{base_url}/api/v2/sms?token={token}",
+                                        f"{base_url}/api/v1/traffic?token={token}",
+                                        f"{base_url}/api/v1/traffic?key={token}",
+                                        f"{base_url}/api/v1/traffic?api_key={token}",
+                                        f"{base_url}/api/v1/traffic?type=sms&token={token}",
+                                        f"{base_url}/api/v1/traffic?type=otp&token={token}",
+                                        f"{base_url}/api/v1/numbers?token={token}",  # Fallback
                                     ]
-                                    print(f"🔍 Thirdwave: Trying {len(urls_to_try)} endpoints")
+                                    print(f"🔍 Thirdwave: Trying /traffic endpoint (manager suggested)")
                                 else:
                                     if "{token}" in url or "{key}" in url:
                                         urls_to_try.append(url.replace("{token}", token).replace("{key}", token))
@@ -1293,12 +1300,12 @@ def panel_monitor_thread():
                             
                             zenex_target = full_url or url
                             
-                            # Thirdwave - Bearer token
-                            if "thirdwave" in str(urls_to_try).lower() or "thirdwave" in zenex_target.lower():
+                            # Thirdwave - Bearer token (as per documentation)
+                            if "thirdwave" in str(urls_to_try).lower() or "thirdwave" in zenex_target.lower() or "app.thirdwave.im" in zenex_target:
                                 if token:
                                     headers['Authorization'] = f'Bearer {token}'
                                     headers['X-API-Key'] = token
-                                    print(f"🔑 Thirdwave: Using Bearer token")
+                                    print(f"🔑 Thirdwave: Using Bearer token + X-API-Key")
                             
                             # Green SMS - Bearer token
                             if "143.110.245.86" in str(urls_to_try) or "143.110.245.86" in zenex_target:
@@ -4089,16 +4096,19 @@ def handle_callback(call):
                     if full_url:
                         urls_to_try.append(full_url)
                     else:
-                        if "thirdwave" in url.lower() or "thirdwave.im" in url.lower():
+                        if "thirdwave" in url.lower() or "thirdwave.im" in url.lower() or "app.thirdwave.im" in url:
                             base_url = url.split('/api/')[0] if '/api/' in url else url
                             base_url = base_url.rstrip('/')
+                            # As per manager: /traffic contains all data including SMS
                             urls_to_try = [
-                                f"{base_url}/api/v1/sms?token={token}",
-                                f"{base_url}/api/v1/sms?key={token}",
-                                f"{base_url}/api/v1/sms?api_key={token}",
-                                f"{base_url}/api/v1/messages?token={token}",
-                                f"{base_url}/api/v1/otp?token={token}",
+                                f"{base_url}/api/v1/traffic?token={token}",
+                                f"{base_url}/api/v1/traffic?key={token}",
+                                f"{base_url}/api/v1/traffic?api_key={token}",
+                                f"{base_url}/api/v1/traffic?type=sms&token={token}",
+                                f"{base_url}/api/v1/traffic?type=otp&token={token}",
+                                f"{base_url}/api/v1/numbers?token={token}",
                             ]
+                            print(f"🔍 Thirdwave: Trying /traffic endpoint (manager suggested)")
                         else:
                             if "{token}" in url or "{key}" in url:
                                 urls_to_try.append(url.replace("{token}", token).replace("{key}", token))
@@ -4123,11 +4133,11 @@ def handle_callback(call):
                     
                     zenex_target = full_url or url
                     
-                    if "thirdwave" in zenex_target.lower() or "thirdwave" in str(urls_to_try).lower():
+                    if "thirdwave" in zenex_target.lower() or "thirdwave" in str(urls_to_try).lower() or "app.thirdwave.im" in zenex_target:
                         if token:
                             headers['Authorization'] = f'Bearer {token}'
                             headers['X-API-Key'] = token
-                            print(f"🔑 Thirdwave: Testing with Bearer token")
+                            print(f"🔑 Thirdwave: Testing with Bearer token + X-API-Key")
                     
                     if "zenexnetwork.com" in zenex_target:
                         zenex_key = token
