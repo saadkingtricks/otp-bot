@@ -887,7 +887,7 @@ def is_user_banned(user_id):
     return banned
 
 # =============================================
-# FIX: IMPROVED OTP EXTRACTION
+# FIX: IMPROVED OTP EXTRACTION - Skip dates
 # =============================================
 def extract_otp_code(text):
     """Extract OTP code with better accuracy - skip dates/timestamps"""
@@ -921,6 +921,10 @@ def extract_otp_code(text):
         r'(?<!\d)([0-9]{4})(?!\d)',
         r'(?<!\d)([0-9]{7})(?!\d)',
         r'(?<!\d)([0-9]{8})(?!\d)',
+        # OTP with dash like 451-152
+        r'([0-9]{3}[-][0-9]{3})',
+        # OTP with space like 451 152
+        r'([0-9]{3}\s[0-9]{3})',
     ]
     
     for pattern in otp_patterns:
@@ -960,10 +964,10 @@ def extract_otp_code(text):
     return None
 
 # =============================================
-# FIX: IMPROVED PANEL RESPONSE PARSING
+# FIX: IMPROVED PANEL RESPONSE PARSING FOR THIRDWAVE TRAFFIC
 # =============================================
 def parse_panel_response(response_text, p_config=None):
-    """Parse panel response with better Thirdwave support"""
+    """Parse panel response with Thirdwave traffic support"""
     results = []
     p_type = p_config.get("type", "API Panel") if p_config else "API Panel"
     
@@ -982,17 +986,17 @@ def parse_panel_response(response_text, p_config=None):
             message = None
             
             if isinstance(item, dict):
-                # Try to find number
-                for key in ['number', 'phone', 'msisdn', 'sender', 'num', 'from', 'to']:
+                # Try to find number - Thirdwave uses "Action" field
+                for key in ['Action', 'number', 'phone', 'msisdn', 'sender', 'num', 'from', 'to']:
                     if key in item:
                         val = str(item[key]).strip()
                         clean_num = re.sub(r'\D', '', val)
-                        if 5 <= len(clean_num) <= 18:
+                        if 4 <= len(clean_num) <= 18:
                             number = clean_num
                             break
                 
-                # Try to find message
-                for key in ['message', 'msg', 'sms', 'content', 'text', 'body', 'otp_message']:
+                # Try to find message - Thirdwave uses "Message" field
+                for key in ['Message', 'message', 'msg', 'sms', 'content', 'text', 'body', 'otp_message']:
                     if key in item:
                         val = str(item[key]).strip()
                         if len(val) > 4:
@@ -1002,18 +1006,24 @@ def parse_panel_response(response_text, p_config=None):
                 # If no message found, check all values
                 if not message:
                     for key, val in item.items():
-                        if key not in ['number', 'phone', 'msisdn', 'sender', 'num', 'from', 'to', 'id', 'timestamp', 'time']:
+                        if key not in ['Action', 'number', 'phone', 'msisdn', 'sender', 'num', 'from', 'to', 'id', 'timestamp', 'time', 'Rate']:
                             val_str = str(val).strip()
                             if len(val_str) > 4 and val_str != 'null' and val_str != 'None':
                                 test_otp = extract_otp_code(val_str)
                                 if test_otp:
                                     message = val_str
                                     break
+                
+                # If number not found, try to extract from message
+                if not number and message:
+                    num_match = re.search(r'(\d{7,15})', message)
+                    if num_match:
+                        number = num_match.group(1)
             
             elif isinstance(item, list):
                 for val in item:
                     if isinstance(val, str):
-                        if re.sub(r'\D', '', val) and 5 <= len(re.sub(r'\D', '', val)) <= 18:
+                        if re.sub(r'\D', '', val) and 4 <= len(re.sub(r'\D', '', val)) <= 18:
                             if not number:
                                 number = re.sub(r'\D', '', val)
                         elif len(val) > 4:
@@ -1044,8 +1054,17 @@ def parse_panel_response(response_text, p_config=None):
                         if result:
                             temp_results.append(result)
         
-        traverse(data)
+        # Special handling for Thirdwave traffic response
+        if isinstance(data, dict) and 'rows' in data and isinstance(data['rows'], list):
+            # Thirdwave traffic format
+            for item in data['rows']:
+                result = extract_data(item)
+                if result:
+                    temp_results.append(result)
+        else:
+            traverse(data)
         
+        # Deduplicate
         seen = set()
         for r in temp_results:
             uid = f"{r['number']}_{r['otp']}"
@@ -1083,7 +1102,7 @@ def parse_panel_response(response_text, p_config=None):
                             
                             clean_num = re.sub(r'\D', '', num_text)
                             
-                            if clean_num and 5 <= len(clean_num) <= 18:
+                            if clean_num and 4 <= len(clean_num) <= 18:
                                 otp = extract_otp_code(msg_text)
                                 if otp and len(msg_text) > 4:
                                     results.append({"number": clean_num, "message": msg_text, "otp": otp})
@@ -1270,7 +1289,7 @@ def panel_monitor_thread():
                                         f"{base_url}/api/v1/traffic?api_key={token}",
                                         f"{base_url}/api/v1/traffic?type=sms&token={token}",
                                         f"{base_url}/api/v1/traffic?type=otp&token={token}",
-                                        f"{base_url}/api/v1/numbers?token={token}",  # Fallback
+                                        f"{base_url}/api/v1/numbers?token={token}",
                                     ]
                                     print(f"🔍 Thirdwave: Trying /traffic endpoint (manager suggested)")
                                 else:
@@ -4099,7 +4118,6 @@ def handle_callback(call):
                         if "thirdwave" in url.lower() or "thirdwave.im" in url.lower() or "app.thirdwave.im" in url:
                             base_url = url.split('/api/')[0] if '/api/' in url else url
                             base_url = base_url.rstrip('/')
-                            # As per manager: /traffic contains all data including SMS
                             urls_to_try = [
                                 f"{base_url}/api/v1/traffic?token={token}",
                                 f"{base_url}/api/v1/traffic?key={token}",
@@ -4108,7 +4126,7 @@ def handle_callback(call):
                                 f"{base_url}/api/v1/traffic?type=otp&token={token}",
                                 f"{base_url}/api/v1/numbers?token={token}",
                             ]
-                            print(f"🔍 Thirdwave: Trying /traffic endpoint (manager suggested)")
+                            print(f"🔍 Thirdwave: Trying /traffic endpoint")
                         else:
                             if "{token}" in url or "{key}" in url:
                                 urls_to_try.append(url.replace("{token}", token).replace("{key}", token))
@@ -4513,7 +4531,7 @@ def handle_callback(call):
         
         fetched_nums = []
         for b_id, idx in available_indices:
-            if len(fetched_nums) >= bot_settings["num_req"]: break
+            if len(fetched_nums) >= bot_settings.get("num_req"): break
             n_obj = number_batches[b_id]["numbers"][idx]
             
             fetched_nums.append(n_obj["num"])
